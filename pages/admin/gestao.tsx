@@ -1,0 +1,849 @@
+import type { GetServerSideProps } from "next";
+import { getServerSession } from "next-auth/next";
+import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
+import { CldUploadWidget } from "next-cloudinary";
+import { authOptions } from "../api/auth/[...nextauth]";
+import { AdminLayout } from "../../components/AdminLayout";
+import { useFeedback } from "../../components/Feedback";
+
+type CategoryItem = {
+  id: number;
+  name: string;
+};
+
+type ProductItem = {
+  id: number;
+  name: string;
+  price_cents: number;
+  quantity: number;
+  active: boolean;
+  image_path: string | null;
+  category_id: number | null;
+  category_name: string | null;
+};
+
+type ModalMode = "category" | "product" | "edit" | null;
+
+function formatPriceParts(cents: number) {
+  const value = (cents / 100).toFixed(2);
+  const [whole, decimal] = value.split(".");
+
+  return { whole, decimal };
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T | { error: string }> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (!contentType.includes("application/json")) {
+    const text = await response.text();
+    return {
+      error: text.trim() || "Resposta invalida do servidor.",
+    };
+  }
+
+  return (await response.json()) as T | { error: string };
+}
+
+function normalizePriceInput(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.includes(",")) {
+    return trimmed.replace(/\./g, "").replace(",", ".");
+  }
+
+  return trimmed;
+}
+
+export const getServerSideProps: GetServerSideProps = async (context) => {
+  const session = await getServerSession(context.req, context.res, authOptions);
+
+  if (!session?.user) {
+    return {
+      redirect: {
+        destination: "/admin/login",
+        permanent: false,
+      },
+    };
+  }
+
+  return { props: {} };
+};
+
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 50,
+        background: "rgba(15, 23, 42, 0.55)",
+        display: "grid",
+        placeItems: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+        className="card card-pad"
+        style={{ width: "min(720px, 100%)", maxHeight: "90vh", overflow: "auto" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>
+            {title}
+          </h2>
+          <button className="btn btn-ghost" type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export default function GestaoPage() {
+  const { toast, confirm } = useFeedback();
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [categoryName, setCategoryName] = useState("");
+  const [categoryMessage, setCategoryMessage] = useState("");
+  const [categoryEditingId, setCategoryEditingId] = useState<number | null>(null);
+  const [message, setMessage] = useState("");
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
+
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [stockStatus, setStockStatus] = useState("active");
+  const [categoryId, setCategoryId] = useState("");
+  const [imagePath, setImagePath] = useState("");
+
+  const [editingProductId, setEditingProductId] = useState<number | null>(null);
+
+  const editingProduct = useMemo(
+    () => products.find((product) => product.id === editingProductId) ?? null,
+    [editingProductId, products],
+  );
+
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const product of products) {
+      if (!product.category_id) continue;
+      counts.set(product.category_id, (counts.get(product.category_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [products]);
+
+  async function loadCategories() {
+    const response = await fetch("/api/admin/categories");
+    const data = (await readJsonResponse<{ items: CategoryItem[] }>(response)) as {
+      items?: CategoryItem[];
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setCategoryMessage(data.error ?? "Falha ao carregar categorias.");
+      setCategories([]);
+      return;
+    }
+
+    setCategories(data.items ?? []);
+  }
+
+  async function loadProducts() {
+    const response = await fetch("/api/admin/products");
+    const data = (await readJsonResponse<{ items: ProductItem[] }>(response)) as {
+      items?: ProductItem[];
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Falha ao carregar produtos.");
+      setProducts([]);
+      return;
+    }
+
+    setProducts(data.items ?? []);
+  }
+
+  useEffect(() => {
+    void loadCategories().catch(() => setCategories([]));
+    void loadProducts().catch(() => setProducts([]));
+  }, []);
+
+  function openCategoryModal() {
+    setCategoryMessage("");
+    setCategoryName("");
+    setCategoryEditingId(null);
+    setModalMode("category");
+  }
+
+  function openEditCategoryModal(category: CategoryItem) {
+    setCategoryMessage("");
+    setCategoryName(category.name);
+    setCategoryEditingId(category.id);
+    setModalMode("category");
+  }
+
+  function openProductModal() {
+    setMessage("");
+    setName("");
+    setPrice("");
+    setStockStatus("active");
+    setCategoryId(categories[0]?.id ? String(categories[0].id) : "");
+    setImagePath("");
+    setEditingProductId(null);
+    setModalMode("product");
+  }
+
+  function openEditModal(product: ProductItem) {
+    setMessage("");
+    setEditingProductId(product.id);
+    setName(product.name);
+    setPrice((product.price_cents / 100).toFixed(2));
+    setStockStatus(product.active ? "active" : "inactive");
+    setCategoryId(product.category_id ? String(product.category_id) : "");
+    setImagePath(product.image_path ?? "");
+    setModalMode("edit");
+  }
+
+  function closeModal() {
+    setModalMode(null);
+    setEditingProductId(null);
+    setCategoryEditingId(null);
+  }
+
+  async function saveCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCategoryMessage("");
+
+    const response = await fetch("/api/admin/categories", {
+      method: categoryEditingId ? "PATCH" : "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id: categoryEditingId, name: categoryName }),
+    });
+
+    const data = (await readJsonResponse<{ error?: string }>(response)) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setCategoryMessage(data.error ?? "Falha ao salvar categoria.");
+      toast({
+        title: "Nao foi possivel salvar a categoria",
+        description: data.error ?? "Verifique os dados e tente novamente.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setCategoryMessage(categoryEditingId ? "Categoria atualizada com sucesso." : "Categoria cadastrada com sucesso.");
+    toast({
+      title: categoryEditingId ? "Categoria atualizada" : "Categoria criada",
+      description: categoryName,
+      variant: "success",
+    });
+    setCategoryName("");
+    setCategoryEditingId(null);
+    await loadCategories();
+    await loadProducts();
+    closeModal();
+  }
+
+  async function deleteCategory(categoryIdValue: number) {
+    const confirmed = await confirm({
+      title: "Remover categoria",
+      description: "Essa acao vai excluir a categoria e os produtos ficarao sem categoria associada.",
+      confirmLabel: "Remover",
+      cancelLabel: "Cancelar",
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    const response = await fetch("/api/admin/categories", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id: categoryIdValue }),
+    });
+
+    const data = (await readJsonResponse<{ error?: string }>(response)) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setCategoryMessage(data.error ?? "Falha ao remover categoria.");
+      toast({
+        title: "Falha ao remover a categoria",
+        description: data.error ?? "Tente novamente.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setCategoryMessage("Categoria removida com sucesso.");
+    toast({
+      title: "Categoria removida",
+      description: "A categoria foi excluida com sucesso.",
+      variant: "success",
+    });
+    await loadCategories();
+    await loadProducts();
+  }
+
+  async function createProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+
+    const response = await fetch("/api/admin/products", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        price,
+        quantity: 0,
+        categoryId: Number(categoryId),
+        imagePath,
+        active: stockStatus === "active",
+      }),
+    });
+
+    const data = (await readJsonResponse<{ error?: string }>(response)) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Falha ao cadastrar item.");
+      toast({
+        title: "Nao foi possivel criar o item",
+        description: data.error ?? "Verifique os dados e tente novamente.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setMessage("Item cadastrado com sucesso.");
+    toast({
+      title: "Item criado com sucesso",
+      description: "O item foi adicionado ao cardapio.",
+      variant: "success",
+    });
+    setName("");
+    setPrice("");
+    setStockStatus("active");
+    setCategoryId("");
+    setImagePath("");
+    await loadProducts();
+    closeModal();
+  }
+
+  async function updateProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+
+    if (!editingProduct) {
+      setMessage("Produto selecionado invalido.");
+      return;
+    }
+
+    const response = await fetch("/api/admin/products", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: editingProduct.id,
+        name,
+        price,
+        categoryId: categoryId ? Number(categoryId) : null,
+        imagePath,
+        active: stockStatus === "active",
+      }),
+    });
+
+    const data = (await readJsonResponse<{ error?: string }>(response)) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Falha ao atualizar o produto.");
+      toast({
+        title: "Nao foi possivel atualizar o item",
+        description: data.error ?? "Verifique os dados e tente novamente.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setMessage("Item atualizado com sucesso.");
+    toast({
+      title: "Item atualizado",
+      description: "As alteracoes foram salvas.",
+      variant: "success",
+    });
+    await loadProducts();
+    closeModal();
+  }
+
+  async function deleteProduct(productIdValue: number) {
+    const confirmed = await confirm({
+      title: "Excluir item do cardapio",
+      description: "Essa acao remove o produto de vez. O historico de pedidos e perdas continua preservado.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    const response = await fetch("/api/admin/products", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id: productIdValue }),
+    });
+
+    const data = (await readJsonResponse<{ error?: string }>(response)) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Falha ao remover o produto.");
+      toast({
+        title: "Nao foi possivel excluir o item",
+        description: data.error ?? "Tente novamente.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setMessage("Item removido com sucesso.");
+    toast({
+      title: "Item excluido",
+      description: "O produto foi removido do cardapio.",
+      variant: "success",
+    });
+    await loadProducts();
+  }
+
+  return (
+    <>
+      <AdminLayout title="Gestão de Categorias e Itens" subtitle="Categorias e itens do cardápio com edição rápida.">
+        <section style={{ display: "grid", gap: 48 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <h2 className="section-title" style={{ marginBottom: 4 }}>
+                Categorias
+              </h2>
+              <p className="subtitle" style={{ margin: 0 }}>
+                {categories.length} categorias · arraste para reordenar
+              </p>
+            </div>
+            <button className="btn btn-primary" type="button" onClick={openCategoryModal}>
+              Criar categorias
+            </button>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 14,
+            }}
+          >
+            {categories.map((category) => (
+              <article
+                key={category.id}
+                className="card"
+                style={{
+                  minHeight: 162,
+                  padding: 14,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                  <div>
+                    <strong style={{ fontSize: 15, color: "var(--text)" }}>{category.name}</strong>
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                      {categoryCounts.get(category.id) ?? 0} itens
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      background: "var(--brand-tint)",
+                      color: "var(--brand-2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {category.name.charAt(0).toUpperCase()}
+                  </div>
+                </div>
+
+                <div style={{ flex: 1 }} />
+
+                <div
+                  style={{
+                    borderTop: "1px solid var(--line)",
+                    paddingTop: 10,
+                    display: "flex",
+                    gap: 6,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => openEditCategoryModal(category)}
+                    aria-label={`Editar categoria ${category.name}`}
+                    className="btn btn-ghost"
+                    style={{
+                      flex: 1,
+                      borderRadius: 10,
+                      background: "#fff",
+                      border: "1px solid var(--line)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                      edit
+                    </span>
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteCategory(category.id)}
+                    aria-label={`Remover categoria ${category.name}`}
+                    className="btn btn-ghost"
+                    style={{
+                      flex: 1,
+                      borderRadius: 10,
+                      background: "#fff",
+                      border: "1px solid rgba(185, 28, 28, 0.28)",
+                      color: "var(--danger)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                      delete
+                    </span>
+                    Remover
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section style={{ display: "grid", gap: 48 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <h2 className="section-title" style={{ marginBottom: 4 }}>
+                Cardápio Management
+              </h2>
+              <p className="subtitle" style={{ margin: 0 }}>
+                {products.length} itens cadastrados
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-ghost" type="button">
+                <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                  filter_alt
+                </span>
+                Filtrar
+              </button>
+              <button className="btn btn-primary" type="button" onClick={openProductModal}>
+                Criar item
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+              gap: 14,
+            }}
+          >
+            {products.map((product) => (
+              <article
+                key={product.id}
+                className="card"
+                style={{
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: 0,
+                }}
+              >
+                <div style={{ padding: 8, paddingBottom: 0 }}>
+                  <div
+                    style={{
+                      position: "relative",
+                      aspectRatio: "1.28 / 1",
+                      borderRadius: 8,
+                      overflow: "hidden",
+                      background: "var(--surface-2)",
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    {product.image_path ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={product.image_path}
+                        alt={product.name}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          display: "grid",
+                          placeItems: "center",
+                          color: "var(--muted)",
+                          fontWeight: 700,
+                          background:
+                            "repeating-linear-gradient(135deg, rgba(249,115,22,0.1) 0 10px, rgba(231,229,228,0.75) 10px 20px)",
+                        }}
+                      >
+                        Sem imagem
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ padding: "12px 14px 14px", display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.6 }}>
+                    {product.category_name ?? "Sem categoria"}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", letterSpacing: -0.1 }}>
+                    {product.name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "var(--muted)",
+                      lineHeight: 1.4,
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 2,
+                      overflow: "hidden",
+                      flex: 1,
+                    }}
+                  >
+                    {product.active ? "Item ativo no cardápio." : "Item inativo no cardápio."}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 8,
+                      paddingTop: 10,
+                      borderTop: "1px solid var(--line)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <div
+                      className="admin-price"
+                    >
+                      <span className="admin-price-currency">R$</span>
+                      <span className="admin-price-value">{formatPriceParts(product.price_cents).whole}</span>
+                      <span className="admin-price-decimal">.{formatPriceParts(product.price_cents).decimal}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => openEditModal(product)}
+                        style={{ padding: "6px 8px", display: "flex", alignItems: "center", gap: 4 }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                          edit
+                        </span>
+                        Editar
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => deleteProduct(product.id)}
+                        style={{ padding: "6px 8px", display: "flex", alignItems: "center", gap: 4, color: "var(--danger)" }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                          delete
+                        </span>
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {message ? <p className="subtitle" style={{ margin: 0 }}>{message}</p> : null}
+      </AdminLayout>
+
+      {modalMode === "category" ? (
+        <Modal
+          title={categoryEditingId ? "Editar Categoria" : "Adicionar Categoria"}
+          onClose={closeModal}
+        >
+          <form onSubmit={saveCategory} className="grid" style={{ gap: 12 }}>
+            <input
+              className="input"
+              value={categoryName}
+              onChange={(event) => setCategoryName(event.target.value)}
+              placeholder="Nome da categoria"
+            />
+            <button className="btn btn-primary" type="submit">
+              {categoryEditingId ? "Salvar alteracoes" : "Salvar categoria"}
+            </button>
+            {categoryMessage ? <p style={{ margin: 0 }}>{categoryMessage}</p> : null}
+          </form>
+        </Modal>
+      ) : null}
+
+      {modalMode === "product" || modalMode === "edit" ? (
+        <Modal
+          title={modalMode === "edit" ? "Editar produto" : "Adicionar produto"}
+          onClose={closeModal}
+        >
+          <form
+            onSubmit={modalMode === "edit" ? updateProduct : createProduct}
+            className="grid"
+            style={{ gap: 12 }}
+          >
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <CldUploadWidget
+                signatureEndpoint="/api/cloudinary/signature"
+                onSuccess={(result) => {
+                  const info = result.info;
+                  if (info && typeof info === "object" && "secure_url" in info) {
+                    setImagePath(String(info.secure_url));
+                  }
+                }}
+                options={{
+                  sources: ["local"],
+                  multiple: false,
+                  maxFiles: 1,
+                }}
+              >
+                {({ open }) => (
+                  <button
+                    type="button"
+                    onClick={() => open()}
+                    style={{
+                      width: 160,
+                      height: 160,
+                      borderRadius: "50%",
+                      border: "2px dashed var(--line)",
+                      overflow: "hidden",
+                      background: "var(--surface-2)",
+                      display: "grid",
+                      placeItems: "center",
+                      cursor: "pointer",
+                      margin: "0 auto",
+                      padding: 0,
+                    }}
+                  >
+                    {imagePath ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={imagePath}
+                        alt="Pre-visualizacao do produto"
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    ) : (
+                      <span className="muted" style={{ textAlign: "center", padding: 12 }}>
+                        Adicionar imagem
+                      </span>
+                    )}
+                  </button>
+                )}
+              </CldUploadWidget>
+            </div>
+
+            <input
+              className="input"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Nome do item"
+            />
+            <input
+              className="input"
+              value={price}
+              onChange={(event) => setPrice(normalizePriceInput(event.target.value))}
+              placeholder="Preco, ex: 7,50"
+              inputMode="decimal"
+            />
+            <select
+              className="input"
+              value={stockStatus}
+              onChange={(event) => setStockStatus(event.target.value)}
+            >
+              <option value="active">Em estoque</option>
+              <option value="inactive">Fora de estoque</option>
+            </select>
+            <select
+              className="input"
+              value={categoryId}
+              onChange={(event) => setCategoryId(event.target.value)}
+            >
+              <option value="">Selecione uma categoria</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn btn-primary" type="submit">
+              {modalMode === "edit" ? "Salvar alteracoes" : "Salvar item"}
+            </button>
+            {message ? <p style={{ margin: 0 }}>{message}</p> : null}
+          </form>
+        </Modal>
+      ) : null}
+    </>
+  );
+}
