@@ -13,6 +13,7 @@ type ResponseData = {
     total_cents: number;
     notes: string | null;
     created_at: string;
+    order_date: string;
   }>;
   items: Array<{
     order_id: number;
@@ -23,7 +24,34 @@ type ResponseData = {
   }>;
 };
 
+type LossItem = {
+  id: number;
+  batch_id: string | null;
+  operator_name: string | null;
+  loss_date: string;
+  product_name: string;
+  quantity: number;
+  observation: string;
+  total_cents: number;
+  created_at: string;
+};
+
+type LossResponse = {
+  items: LossItem[];
+};
+
 type SelectedOrder = ResponseData["orders"][number] | null;
+
+type LossGroup = {
+  key: string;
+  operatorName: string;
+  lossDate: string;
+  observation: string;
+  createdAt: string;
+  totalCents: number;
+  quantity: number;
+  items: LossItem[];
+};
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerSession(context.req, context.res, authOptions);
@@ -58,16 +86,31 @@ function formatTime(value: string) {
   });
 }
 
+function toDateKey(value: string) {
+  return value.slice(0, 10);
+}
+
 export default function VendasPage() {
   const [data, setData] = useState<ResponseData | null>(null);
+  const [losses, setLosses] = useState<LossItem[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<SelectedOrder>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    void fetch("/api/admin/sales")
-      .then((response) => response.json() as Promise<ResponseData>)
-      .then((payload) => setData(payload))
-      .catch(() => setData(null));
+    void Promise.all([fetch("/api/admin/sales"), fetch("/api/admin/losses")])
+      .then(async ([salesResponse, lossesResponse]) => {
+        const [salesPayload, lossesPayload] = (await Promise.all([
+          salesResponse.json() as Promise<ResponseData>,
+          lossesResponse.json() as Promise<LossResponse>,
+        ])) as [ResponseData, LossResponse];
+
+        setData(salesPayload);
+        setLosses(lossesPayload.items ?? []);
+      })
+      .catch(() => {
+        setData(null);
+        setLosses([]);
+      });
   }, []);
 
   const groupedItems = useMemo(() => {
@@ -103,17 +146,28 @@ export default function VendasPage() {
     const map = new Map<string, ResponseData["orders"]>();
 
     for (const order of data?.orders ?? []) {
-      const dateKey = new Date(order.created_at).toDateString();
+      const dateKey = order.order_date || toDateKey(order.created_at);
       map.set(dateKey, [...(map.get(dateKey) ?? []), order]);
     }
 
     return Array.from(map.entries()).map(([dateKey, orders]) => ({
       dateKey,
-      label: formatDateGroup(new Date(orders[0].created_at)),
+      label: formatDateGroup(new Date(`${dateKey}T12:00:00`)),
       orders,
       total: orders.reduce((sum, order) => sum + order.total_cents, 0),
     }));
   }, [data?.orders]);
+
+  const lossesByDate = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const loss of losses) {
+      const dateKey = loss.loss_date.slice(0, 10);
+      map.set(dateKey, (map.get(dateKey) ?? 0) + loss.total_cents);
+    }
+
+    return map;
+  }, [losses]);
 
   function toggleGroup(dateKey: string) {
     setOpenGroups((current) => ({
@@ -161,54 +215,116 @@ export default function VendasPage() {
 
         {groupedOrders.map((group, index) => {
           const expanded = openGroups[group.dateKey] ?? index === 0;
+          const lossesTotalForDay = lossesByDate.get(group.dateKey) ?? 0;
+          const netTotal = group.total - lossesTotalForDay;
 
           return (
             <section key={group.dateKey} className="card" style={{ overflow: "hidden" }}>
-              <button
-                type="button"
-                onClick={() => toggleGroup(group.dateKey)}
+              <div
                 className="card-pad"
                 style={{
-                  width: "100%",
                   display: "flex",
                   justifyContent: "space-between",
-                  alignItems: "center",
                   gap: 16,
+                  alignItems: "flex-start",
                   background: "white",
-                  border: 0,
-                  textAlign: "left",
-                  minHeight: 96,
                   paddingTop: 22,
                   paddingBottom: 22,
                 }}
               >
-                <div style={{ minWidth: 0, flex: 1, display: "grid", gap: 10 }}>
-                  <h2
-                    className="section-title"
+                <div style={{ minWidth: 0, flex: 1, display: "grid", gap: 14 }}>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <h2
+                      className="section-title"
+                      style={{
+                        marginBottom: 0,
+                        fontSize: "1.35rem",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {group.label}
+                    </h2>
+                    <p
+                      className="subtitle"
+                      style={{
+                        margin: 0,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {group.orders.length} pedido{group.orders.length === 1 ? "" : "s"} no dia
+                    </p>
+                  </div>
+
+                  <div
+                    className="grid"
                     style={{
-                      marginBottom: 0,
-                      fontSize: "1.6rem",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
+                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                      gap: 12,
                     }}
                   >
-                    {group.label} - R$ {(group.total / 100).toFixed(2)}
-                  </h2>
-                  <p
-                    className="subtitle"
-                    style={{
-                      margin: 0,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {group.orders.length} pedido{group.orders.length === 1 ? "" : "s"} no dia
-                  </p>
+                    <article
+                      className="card"
+                      style={{
+                        padding: "12px 14px",
+                        display: "grid",
+                        gap: 4,
+                        borderLeft: "3px solid var(--brand)",
+                        boxShadow: "none",
+                      }}
+                    >
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                        Total vendido
+                      </div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", letterSpacing: -0.3 }}>
+                        R$ {(netTotal / 100).toFixed(2)}
+                      </div>
+                    </article>
+
+                    <article
+                      className="card"
+                      style={{
+                        padding: "12px 14px",
+                        display: "grid",
+                        gap: 4,
+                        borderLeft: "3px solid var(--danger)",
+                        boxShadow: "none",
+                      }}
+                    >
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                        Perdas
+                      </div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: "var(--danger)", letterSpacing: -0.3 }}>
+                        -R$ {(lossesTotalForDay / 100).toFixed(2)}
+                      </div>
+                    </article>
+
+                    <article
+                      className="card"
+                      style={{
+                        padding: "12px 14px",
+                        display: "grid",
+                        gap: 4,
+                        borderLeft: "3px solid var(--success)",
+                        boxShadow: "none",
+                      }}
+                    >
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                        Volume
+                      </div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", letterSpacing: -0.3 }}>
+                        {group.orders.length} pedido{group.orders.length === 1 ? "" : "s"} no dia
+                      </div>
+                    </article>
+                  </div>
                 </div>
 
-                <span
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.dateKey)}
                   className="btn btn-ghost"
                   style={{
                     background: "rgba(255,244,224,0.95)",
@@ -226,8 +342,8 @@ export default function VendasPage() {
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
                     {expanded ? "expand_less" : "expand_more"}
                   </span>
-                </span>
-              </button>
+                </button>
+              </div>
 
               {expanded ? (
                 <div style={{ padding: "0 18px 18px" }}>
@@ -235,7 +351,7 @@ export default function VendasPage() {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "1.2fr 0.6fr 1.6fr 0.7fr 0.6fr",
+                        gridTemplateColumns: "1.2fr 0.6fr 1.8fr 0.8fr 0.6fr",
                         gap: 12,
                         padding: "14px 16px",
                         borderBottom: "1px solid var(--line)",
@@ -260,7 +376,7 @@ export default function VendasPage() {
                           key={order.id}
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "1.2fr 0.6fr 1.6fr 0.7fr 0.6fr",
+                            gridTemplateColumns: "1.2fr 0.6fr 1.8fr 0.8fr 0.6fr",
                             gap: 12,
                             padding: "14px 16px",
                             borderBottom: orderIndex === group.orders.length - 1 ? 0 : "1px solid var(--line)",

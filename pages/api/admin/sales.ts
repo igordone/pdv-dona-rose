@@ -32,8 +32,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     total_cents: number;
     notes: string | null;
     created_at: string;
+    order_date: string;
   }>(
-    `SELECT id, client_name, client_phone, status, total_cents, notes, created_at
+    `SELECT id, client_name, client_phone, status, total_cents, notes, created_at, created_at::date::text AS order_date
      FROM orders
      ORDER BY created_at DESC`,
   );

@@ -13,6 +13,7 @@ type DashboardData = {
     total_cents: number;
     notes: string | null;
     created_at: string;
+    viewed_at: string | null;
   }>;
   items: Array<{
     order_id: number;
@@ -65,15 +66,109 @@ export default function AdminDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<SelectedOrder>(null);
 
+  async function refreshOrders() {
+    try {
+      const response = await fetch("/api/admin/orders");
+      const payload = (await response.json().catch(() => null)) as DashboardData | null;
+
+      if (!response.ok || !payload) {
+        return;
+      }
+
+      setData(payload);
+    } catch {
+      setData(null);
+    }
+  }
+
   useEffect(() => {
-    void fetch("/api/admin/orders")
-      .then((response) => response.json() as Promise<DashboardData>)
-      .then((payload) => setData(payload))
-      .catch(() => setData(null));
+    let mounted = true;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const handleOrdersUpdated = () => {
+      void refreshOrders();
+    };
+
+    async function bootstrap() {
+      if (!mounted) {
+        return;
+      }
+
+      await refreshOrders();
+    }
+
+    void bootstrap();
+    intervalId = setInterval(() => {
+      void refreshOrders();
+    }, 10000);
+
+    window.addEventListener("admin-orders-updated", handleOrdersUpdated);
+
+    return () => {
+      mounted = false;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+      window.removeEventListener("admin-orders-updated", handleOrdersUpdated);
+    };
   }, []);
 
   const orders = data?.orders ?? [];
   const items = data?.items ?? [];
+
+  async function markOrderAsViewed(orderId: number) {
+    try {
+      const response = await fetch("/api/admin/orders", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id: orderId }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { id?: number; viewed_at?: string | null } | null;
+
+      if (!response.ok || !payload?.id) {
+        return;
+      }
+
+      setData((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          orders: current.orders.map((order) =>
+            order.id === payload.id
+              ? {
+                  ...order,
+                  viewed_at: payload.viewed_at ?? order.viewed_at ?? new Date().toISOString(),
+                }
+              : order,
+          ),
+        };
+      });
+
+      window.dispatchEvent(new Event("admin-orders-updated"));
+    } catch {
+      // Ignore refresh failures and keep the dashboard usable.
+    }
+  }
+
+  function openOrder(order: SelectedOrder) {
+    if (!order) {
+      return;
+    }
+
+    setSelectedOrder(order);
+
+    if (order.viewed_at) {
+      return;
+    }
+
+    void markOrderAsViewed(order.id);
+  }
 
   const groupedItems = useMemo(() => {
     const map = new Map<number, DashboardData["items"]>();
@@ -142,7 +237,7 @@ export default function AdminDashboardPage() {
                 <button
                   key={order.id}
                   type="button"
-                  onClick={() => setSelectedOrder(order)}
+                  onClick={() => openOrder(order)}
                   className={statusClass}
                   style={{
                     textAlign: "left",

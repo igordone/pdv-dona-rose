@@ -164,10 +164,9 @@ export default function HomePage() {
         return;
       }
 
-      setMessage(`${data.message ?? "Pedido enviado."} Número: ${data.orderId ?? "-"}`);
+      setMessage("Pedido enviado com sucesso");
       toast({
-        title: "Pedido criado com sucesso",
-        description: `Número ${data.orderId ?? "-"}`,
+        title: "Pedido enviado com sucesso",
         variant: "success",
         durationMs: 3600,
       });
@@ -206,11 +205,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          {message ? (
-            <div className="pill public-message-pill" style={{ width: "fit-content" }}>
-              {message}
-            </div>
-          ) : null}
+          {message ? <div className="public-message-pill">{message}</div> : null}
         </section>
 
           <section className="card card-pad public-menu-panel">

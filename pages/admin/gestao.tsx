@@ -1,4 +1,4 @@
-import type { GetServerSideProps } from "next";
+﻿import type { GetServerSideProps } from "next";
 import { getServerSession } from "next-auth/next";
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CldUploadWidget } from "next-cloudinary";
@@ -56,6 +56,24 @@ function normalizePriceInput(value: string) {
   }
 
   return trimmed;
+}
+
+function getCategoryIcon(category: string) {
+  const normalized = category.trim().toLowerCase();
+
+  if (normalized === "assados") {
+    return "bakery_dining";
+  }
+
+  if (normalized === "fritos") {
+    return "skillet";
+  }
+
+  if (normalized === "bebidas") {
+    return "local_drink";
+  }
+
+  return "category";
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
@@ -135,6 +153,9 @@ export default function GestaoPage() {
   const [imagePath, setImagePath] = useState("");
 
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [draggedCategoryId, setDraggedCategoryId] = useState<number | null>(null);
+  const [dropTargetCategoryId, setDropTargetCategoryId] = useState<number | null>(null);
+  const [activeProductCategory, setActiveProductCategory] = useState("Todas");
 
   const editingProduct = useMemo(
     () => products.find((product) => product.id === editingProductId) ?? null,
@@ -149,6 +170,48 @@ export default function GestaoPage() {
     }
     return counts;
   }, [products]);
+
+  const productCategories = useMemo(() => ["Todas", ...categories.map((category) => category.name)], [categories]);
+
+  const visibleProducts = useMemo(() => {
+    if (activeProductCategory === "Todas") {
+      return products;
+    }
+
+    return products.filter((product) => product.category_name === activeProductCategory);
+  }, [activeProductCategory, products]);
+
+  function reorderCategoryList(sourceId: number, targetId: number) {
+    const nextCategories = [...categories];
+    const sourceIndex = nextCategories.findIndex((category) => category.id === sourceId);
+    const targetIndex = nextCategories.findIndex((category) => category.id === targetId);
+
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+      return categories;
+    }
+
+    const [movedCategory] = nextCategories.splice(sourceIndex, 1);
+    nextCategories.splice(targetIndex, 0, movedCategory);
+    return nextCategories;
+  }
+
+  async function saveCategoryOrder(nextCategories: CategoryItem[]) {
+    const response = await fetch("/api/admin/categories", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ orderIds: nextCategories.map((category) => category.id) }),
+    });
+
+    const data = (await readJsonResponse<{ error?: string }>(response)) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "Falha ao reordenar categorias.");
+    }
+  }
 
   async function loadCategories() {
     const response = await fetch("/api/admin/categories");
@@ -227,6 +290,36 @@ export default function GestaoPage() {
     setModalMode(null);
     setEditingProductId(null);
     setCategoryEditingId(null);
+  }
+
+  async function handleCategoryDrop(targetCategoryId: number) {
+    if (draggedCategoryId === null || draggedCategoryId === targetCategoryId) {
+      setDraggedCategoryId(null);
+      setDropTargetCategoryId(null);
+      return;
+    }
+
+    const nextCategories = reorderCategoryList(draggedCategoryId, targetCategoryId);
+    setDraggedCategoryId(null);
+    setDropTargetCategoryId(null);
+    setCategories(nextCategories);
+
+    try {
+      await saveCategoryOrder(nextCategories);
+      toast({
+        title: "Categorias reordenadas",
+        description: "A nova ordem foi salva com sucesso.",
+        variant: "success",
+      });
+    } catch (error) {
+      console.error("category_order_save_error", error);
+      toast({
+        title: "Nao foi possivel reordenar",
+        description: "Tente novamente.",
+        variant: "error",
+      });
+      await loadCategories();
+    }
   }
 
   async function saveCategory(event: FormEvent<HTMLFormElement>) {
@@ -479,7 +572,40 @@ export default function GestaoPage() {
             {categories.map((category) => (
               <article
                 key={category.id}
-                className="card"
+                className={`card admin-category-card${draggedCategoryId === category.id ? " is-dragging" : ""}${
+                  dropTargetCategoryId === category.id && draggedCategoryId !== category.id ? " is-drop-target" : ""
+                }`}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", String(category.id));
+                  setDraggedCategoryId(category.id);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (draggedCategoryId !== category.id) {
+                    setDropTargetCategoryId(category.id);
+                  }
+                }}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  if (draggedCategoryId !== category.id) {
+                    setDropTargetCategoryId(category.id);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dropTargetCategoryId === category.id) {
+                    setDropTargetCategoryId(null);
+                  }
+                }}
+                onDrop={async (event) => {
+                  event.preventDefault();
+                  await handleCategoryDrop(category.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedCategoryId(null);
+                  setDropTargetCategoryId(null);
+                }}
                 style={{
                   minHeight: 162,
                   padding: 14,
@@ -496,76 +622,52 @@ export default function GestaoPage() {
                     </div>
                   </div>
                   <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8,
-                      background: "var(--brand-tint)",
-                      color: "var(--brand-2)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 13,
-                      fontWeight: 700,
-                    }}
+                    className="admin-drag-handle"
+                    aria-hidden="true"
+                    title="Arraste para reordenar"
                   >
-                    {category.name.charAt(0).toUpperCase()}
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 -960 960 960"
+                      role="img"
+                      focusable="false"
+                      aria-hidden="true"
+                    >
+                      <path d="M360-160q-33 0-56.5-23.5T280-240q0-33 23.5-56.5T360-320q33 0 56.5 23.5T440-240q0 33-23.5 56.5T360-160Zm240 0q-33 0-56.5-23.5T520-240q0-33 23.5-56.5T600-320q33 0 56.5 23.5T680-240q0 33-23.5 56.5T600-160ZM360-400q-33 0-56.5-23.5T280-480q0-33 23.5-56.5T360-560q33 0 56.5 23.5T440-480q0 33-23.5 56.5T360-400Zm240 0q-33 0-56.5-23.5T520-480q0-33 23.5-56.5T600-560q33 0 56.5 23.5T680-480q0 33-23.5 56.5T600-400ZM360-640q-33 0-56.5-23.5T280-720q0-33 23.5-56.5T360-800q33 0 56.5 23.5T440-720q0 33-23.5 56.5T360-640Zm240 0q-33 0-56.5-23.5T520-720q0-33 23.5-56.5T600-800q33 0 56.5 23.5T680-720q0 33-23.5 56.5T600-640Z" />
+                    </svg>
                   </div>
                 </div>
 
                 <div style={{ flex: 1 }} />
 
-                <div
-                  style={{
-                    borderTop: "1px solid var(--line)",
-                    paddingTop: 10,
-                    display: "flex",
-                    gap: 6,
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => openEditCategoryModal(category)}
-                    aria-label={`Editar categoria ${category.name}`}
-                    className="btn btn-ghost"
-                    style={{
-                      flex: 1,
-                      borderRadius: 10,
-                      background: "#fff",
-                      border: "1px solid var(--line)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
-                      edit
-                    </span>
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteCategory(category.id)}
-                    aria-label={`Remover categoria ${category.name}`}
-                    className="btn btn-ghost"
-                    style={{
-                      flex: 1,
-                      borderRadius: 10,
-                      background: "#fff",
-                      border: "1px solid rgba(185, 28, 28, 0.28)",
-                      color: "var(--danger)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
-                      delete
-                    </span>
-                    Remover
-                  </button>
+                <div className="admin-card-footer">
+                  <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>
+                    {categoryCounts.get(category.id) ?? 0} itens
+                  </div>
+                  <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                    <button
+                      type="button"
+                      onClick={() => openEditCategoryModal(category)}
+                      aria-label={`Editar categoria ${category.name}`}
+                      className="btn-icon"
+                      title="Editar"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                        edit
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteCategory(category.id)}
+                      aria-label={`Remover categoria ${category.name}`}
+                      className="btn-icon btn-icon--danger"
+                      title="Remover"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                        delete
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </article>
             ))}
@@ -576,36 +678,68 @@ export default function GestaoPage() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <div>
               <h2 className="section-title" style={{ marginBottom: 4 }}>
-                Cardápio Management
+                Cardápio
               </h2>
               <p className="subtitle" style={{ margin: 0 }}>
-                {products.length} itens cadastrados
+                {visibleProducts.length} itens cadastrados
               </p>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button className="btn btn-ghost" type="button">
-                <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
-                  filter_alt
-                </span>
-                Filtrar
-              </button>
               <button className="btn btn-primary" type="button" onClick={openProductModal}>
                 Criar item
               </button>
             </div>
           </div>
 
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <div className="admin-category-strip">
+              {productCategories.map((category) => {
+                const active = activeProductCategory === category;
+
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    className={`public-category-chip admin-category-chip${active ? " is-active" : ""}`}
+                    onClick={() => setActiveProductCategory(category)}
+                    aria-pressed={active}
+                    style={{
+                      background: active ? "var(--brand)" : "transparent",
+                      color: active ? "#fff" : "var(--text)",
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: "none",
+                      boxShadow: active ? "inset 0 0 0 1px rgba(255,255,255,0.08)" : "none",
+                    }}
+                  >
+                    {category !== "Todas" ? (
+                      <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: 16 }}>
+                        {getCategoryIcon(category)}
+                      </span>
+                    ) : null}
+                    {category}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="muted" style={{ fontWeight: 700, whiteSpace: "nowrap" }}>
+              {visibleProducts.length} itens
+            </div>
+          </div>
+
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
               gap: 14,
+              justifyContent: "start",
             }}
           >
-            {products.map((product) => (
+            {visibleProducts.map((product) => (
               <article
                 key={product.id}
-                className="card"
+                className="card admin-product-card"
                 style={{
                   overflow: "hidden",
                   display: "flex",
@@ -650,68 +784,45 @@ export default function GestaoPage() {
                   </div>
                 </div>
 
-                <div style={{ padding: "12px 14px 14px", display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                <div className="admin-product-card-body">
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.6 }}>
                     {product.category_name ?? "Sem categoria"}
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", letterSpacing: -0.1 }}>
+                  <div className="admin-product-card-title">
                     {product.name}
                   </div>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "var(--muted)",
-                      lineHeight: 1.4,
-                      display: "-webkit-box",
-                      WebkitBoxOrient: "vertical",
-                      WebkitLineClamp: 2,
-                      overflow: "hidden",
-                      flex: 1,
-                    }}
-                  >
+                  <div className="admin-product-card-description">
                     {product.active ? "Item ativo no cardápio." : "Item inativo no cardápio."}
                   </div>
 
-                  <div
-                    style={{
-                      marginTop: 8,
-                      paddingTop: 10,
-                      borderTop: "1px solid var(--line)",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <div
-                      className="admin-price"
-                    >
+                  <div className="admin-card-footer" style={{ marginTop: 8 }}>
+                    <div className="admin-price">
                       <span className="admin-price-currency">R$</span>
                       <span className="admin-price-value">{formatPriceParts(product.price_cents).whole}</span>
                       <span className="admin-price-decimal">.{formatPriceParts(product.price_cents).decimal}</span>
                     </div>
-                    <div style={{ display: "flex", gap: 4 }}>
+                    <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
                       <button
-                        className="btn btn-ghost"
+                        className="btn-icon"
                         type="button"
                         onClick={() => openEditModal(product)}
-                        style={{ padding: "6px 8px", display: "flex", alignItems: "center", gap: 4 }}
+                        title="Editar"
+                        aria-label={`Editar produto ${product.name}`}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
                           edit
                         </span>
-                        Editar
                       </button>
                       <button
-                        className="btn btn-ghost"
+                        className="btn-icon btn-icon--danger"
                         type="button"
                         onClick={() => deleteProduct(product.id)}
-                        style={{ padding: "6px 8px", display: "flex", alignItems: "center", gap: 4, color: "var(--danger)" }}
+                        title="Remover"
+                        aria-label={`Remover produto ${product.name}`}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
                           delete
                         </span>
-                        Remover
                       </button>
                     </div>
                   </div>
@@ -817,26 +928,63 @@ export default function GestaoPage() {
               placeholder="Preco, ex: 7,50"
               inputMode="decimal"
             />
-            <select
-              className="input"
-              value={stockStatus}
-              onChange={(event) => setStockStatus(event.target.value)}
-            >
-              <option value="active">Em estoque</option>
-              <option value="inactive">Fora de estoque</option>
-            </select>
-            <select
-              className="input"
-              value={categoryId}
-              onChange={(event) => setCategoryId(event.target.value)}
-            >
-              <option value="">Selecione uma categoria</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
+            <div className="modal-choice-field">
+              <div className="public-form-label">Estoque</div>
+              <div className="modal-choice-strip">
+                <button
+                  type="button"
+                  className={`modal-choice-chip${stockStatus === "active" ? " is-active" : ""}`}
+                  onClick={() => setStockStatus("active")}
+                  aria-pressed={stockStatus === "active"}
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">
+                    inventory_2
+                  </span>
+                  <span>Com estoque</span>
+                </button>
+                <button
+                  type="button"
+                  className={`modal-choice-chip${stockStatus === "inactive" ? " is-active" : ""}`}
+                  onClick={() => setStockStatus("inactive")}
+                  aria-pressed={stockStatus === "inactive"}
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">
+                    block
+                  </span>
+                  <span>Sem estoque</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="modal-choice-field">
+              <div className="public-form-label">Categoria</div>
+              <div className="modal-choice-strip modal-choice-strip--wrap">
+                {categories.length > 0 ? (
+                  categories.map((category) => {
+                    const active = categoryId === String(category.id);
+
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        className={`modal-choice-chip${active ? " is-active" : ""}`}
+                        onClick={() => setCategoryId(String(category.id))}
+                        aria-pressed={active}
+                      >
+                        <span className="material-symbols-outlined" aria-hidden="true">
+                          {getCategoryIcon(category.name)}
+                        </span>
+                        <span>{category.name}</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="muted" style={{ padding: "10px 2px" }}>
+                    Nenhuma categoria cadastrada.
+                  </div>
+                )}
+              </div>
+            </div>
             <button className="btn btn-primary" type="submit">
               {modalMode === "edit" ? "Salvar alteracoes" : "Salvar item"}
             </button>
@@ -847,3 +995,7 @@ export default function GestaoPage() {
     </>
   );
 }
+
+
+
+

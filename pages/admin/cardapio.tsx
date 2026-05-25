@@ -1,4 +1,4 @@
-import type { GetServerSideProps } from "next";
+﻿import type { GetServerSideProps } from "next";
 import { getServerSession } from "next-auth/next";
 import { useEffect, useMemo, useState } from "react";
 import { CldImage } from "next-cloudinary";
@@ -99,28 +99,18 @@ export default function CardapioPage() {
   return (
     <AdminLayout title="Cardápio de itens do Restaurante" subtitle="Visualização dos itens cadastrados no cardápio.">
       <section style={{ display: "grid", gap: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "nowrap", alignItems: "center" }}>
-          <div
-            style={{
-              display: "inline-flex",
-              gap: 4,
-              padding: 3,
-              border: "1px solid var(--line)",
-              borderRadius: 10,
-              background: "var(--surface)",
-              flexWrap: "nowrap",
-              overflowX: "auto",
-              maxWidth: "100%",
-            }}
-          >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="admin-category-strip">
             {categories.map((category) => {
               const active = activeCategory === category;
-                return (
-                  <button
-                    key={category}
-                    type="button"
-                    className="btn btn-ghost admin-category-chip"
+
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  className={`public-category-chip admin-category-chip${active ? " is-active" : ""}`}
                   onClick={() => setActiveCategory(category)}
+                  aria-pressed={active}
                   style={{
                     background: active ? "var(--brand)" : "transparent",
                     color: active ? "#fff" : "var(--text)",
@@ -128,101 +118,21 @@ export default function CardapioPage() {
                     borderRadius: 8,
                     border: "none",
                     boxShadow: active ? "inset 0 0 0 1px rgba(255,255,255,0.08)" : "none",
-                    }}
-                  >
-                    {category !== "Todas" ? (
-                      <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: 16 }}>
-                        {getCategoryIcon(category)}
-                      </span>
-                    ) : null}
-                    {category}
-                  </button>
-                );
-              })}
+                  }}
+                >
+                  {category !== "Todas" ? (
+                    <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: 16 }}>
+                      {getCategoryIcon(category)}
+                    </span>
+                  ) : null}
+                  {category}
+                </button>
+              );
+            })}
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "#fff",
-                border: "1px solid var(--line)",
-                borderRadius: 8,
-                padding: "7px 12px",
-                minWidth: 220,
-                color: "var(--muted)",
-              }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                search
-              </span>
-              <input
-                readOnly
-                placeholder="Buscar produto..."
-                aria-label="Buscar produto"
-                style={{
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontFamily: "inherit",
-                  fontSize: 13,
-                  color: "var(--text)",
-                  flex: 1,
-                }}
-              />
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                background: "#F5F5F4",
-                borderRadius: 8,
-                padding: 3,
-                border: "1px solid var(--line)",
-              }}
-            >
-              <button
-                type="button"
-                style={{
-                  background: "#fff",
-                  color: "var(--text)",
-                  border: "none",
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                  grid_view
-                </span>
-              </button>
-              <button
-                type="button"
-                style={{
-                  background: "transparent",
-                  color: "var(--muted)",
-                  border: "none",
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                  view_list
-                </span>
-              </button>
-            </div>
-
-            <div className="muted" style={{ fontWeight: 700, whiteSpace: "nowrap" }}>
-              {visibleItems.length} itens
-            </div>
+          <div className="muted" style={{ fontWeight: 700, whiteSpace: "nowrap" }}>
+            {visibleItems.length} itens
           </div>
         </div>
 
@@ -324,3 +234,4 @@ export default function CardapioPage() {
     </AdminLayout>
   );
 }
+
