@@ -7,7 +7,8 @@ const links = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/gestao", label: "Gestão" },
   { href: "/admin/vendas", label: "Histórico de vendas" },
-  { href: "/admin/perdas", label: "Perdas" },
+  { href: "/admin/gastos", label: "Gastos" },
+  { href: "/admin/configuracoes", label: "Configurações" },
 ];
 
 type AdminLayoutProps = {
@@ -27,6 +28,14 @@ function getLinkIcon(label: string) {
 
   if (label === "Histórico de vendas") {
     return "history";
+  }
+
+  if (label === "Configurações") {
+    return "settings";
+  }
+
+  if (label === "Gastos") {
+    return "paid";
   }
 
   return "inventory_2";
@@ -190,7 +199,9 @@ export function AdminLayout({ title, subtitle, children }: AdminLayoutProps) {
               </div>
             </header>
 
-            <div className="admin-content">{children}</div>
+            <div className="admin-content">
+              <div className="admin-content-stack">{children}</div>
+            </div>
           </main>
         </div>
       </div>

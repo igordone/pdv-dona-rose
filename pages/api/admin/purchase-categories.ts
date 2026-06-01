@@ -15,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === "GET") {
     const result = await query<{ id: number; name: string }>(
-      "SELECT id, name FROM categories ORDER BY order_index ASC, id ASC",
+      "SELECT id, name FROM purchase_categories ORDER BY order_index ASC, id ASC",
     );
 
     return res.status(200).json({ items: result.rows });
@@ -30,19 +30,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const existsResult = await query<{ id: number }>(
-      "SELECT id FROM categories WHERE LOWER(name) = LOWER($1) LIMIT 1",
+      "SELECT id FROM purchase_categories WHERE LOWER(name) = LOWER($1) LIMIT 1",
       [name],
     );
 
     if (existsResult.rows.length > 0) {
-      return res.status(400).json({ error: "Categoria já existe." });
+      return res.status(200).json({ id: existsResult.rows[0].id, alreadyExists: true });
     }
 
     const result = await query<{ id: number }>(
-      `INSERT INTO categories (name, order_index)
+      `INSERT INTO purchase_categories (name, order_index)
        VALUES (
          $1,
-         COALESCE((SELECT MAX(order_index) + 1 FROM categories), 1)
+         COALESCE((SELECT MAX(order_index) + 1 FROM purchase_categories), 1)
        )
        RETURNING id`,
       [name],
@@ -67,7 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const existingResult = await query<{ id: number }>(
-        "SELECT id FROM categories ORDER BY order_index ASC, id ASC",
+        "SELECT id FROM purchase_categories ORDER BY order_index ASC, id ASC",
       );
       const existingIds = existingResult.rows.map((row) => row.id);
 
@@ -84,7 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await client.query("BEGIN");
 
         for (let index = 0; index < uniqueOrderIds.length; index += 1) {
-          await client.query("UPDATE categories SET order_index = $1 WHERE id = $2", [
+          await client.query("UPDATE purchase_categories SET order_index = $1 WHERE id = $2", [
             index + 1,
             uniqueOrderIds[index],
           ]);
@@ -93,7 +93,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
-        console.error("category_reorder_error", error);
+        console.error("purchase_category_reorder_error", error);
         return res.status(500).json({ error: "Falha ao reordenar categorias." });
       } finally {
         client.release();
@@ -111,7 +111,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const existsResult = await query<{ id: number }>(
-      "SELECT id FROM categories WHERE LOWER(name) = LOWER($1) AND id <> $2 LIMIT 1",
+      "SELECT id FROM purchase_categories WHERE LOWER(name) = LOWER($1) AND id <> $2 LIMIT 1",
       [name, id],
     );
 
@@ -120,7 +120,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const result = await query<{ id: number }>(
-      "UPDATE categories SET name = $1 WHERE id = $2 RETURNING id",
+      "UPDATE purchase_categories SET name = $1 WHERE id = $2 RETURNING id",
       [name, id],
     );
 
@@ -139,7 +139,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: "Categoria inválida." });
     }
 
-    const result = await query<{ id: number }>("DELETE FROM categories WHERE id = $1 RETURNING id", [id]);
+    const result = await query<{ id: number }>("DELETE FROM purchase_categories WHERE id = $1 RETURNING id", [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Categoria não encontrada." });

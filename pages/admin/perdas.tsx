@@ -1,9 +1,8 @@
-import type { GetServerSideProps } from "next";
-import { getServerSession } from "next-auth/next";
+﻿import type { GetServerSideProps } from "next";
 import { useSession } from "next-auth/react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { authOptions } from "../api/auth/[...nextauth]";
 import { AdminLayout } from "../../components/AdminLayout";
+import { requireAdminPageSession } from "../../lib/admin-access";
 
 type ProductItem = {
   id: number;
@@ -56,15 +55,9 @@ type SalesSummaryResponse = {
 };
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerSession(context.req, context.res, authOptions);
-
-  if (!session?.user) {
-    return {
-      redirect: {
-        destination: "/admin/login",
-        permanent: false,
-      },
-    };
+  const adminRedirect = await requireAdminPageSession(context);
+  if (adminRedirect) {
+    return adminRedirect;
   }
 
   return { props: {} };

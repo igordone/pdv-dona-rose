@@ -5,6 +5,7 @@ export type Product = {
   quantity: number;
   active: boolean;
   image_path?: string | null;
+  brand?: string | null;
   category_id?: number | null;
   category_name?: string | null;
 };
@@ -13,4 +14,3 @@ export type OrderItemInput = {
   productId: number;
   quantity: number;
 };
-

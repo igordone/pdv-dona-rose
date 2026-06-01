@@ -1,14 +1,18 @@
 import type { GetServerSideProps } from "next";
-import { getServerSession } from "next-auth/next";
 import { useEffect, useMemo, useState } from "react";
-import { authOptions } from "../api/auth/[...nextauth]";
 import { AdminLayout } from "../../components/AdminLayout";
+import { requireAdminPageSession } from "../../lib/admin-access";
 
 type DashboardData = {
   orders: Array<{
     id: number;
+    order_code: string | null;
     client_name: string | null;
     client_phone: string | null;
+    delivery_method: string;
+    delivery_address: string | null;
+    payment_method: string;
+    payment_confirmed_at: string | null;
     status: string;
     total_cents: number;
     notes: string | null;
@@ -26,16 +30,12 @@ type DashboardData = {
 
 type SelectedOrder = DashboardData["orders"][number] | null;
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerSession(context.req, context.res, authOptions);
+type NormalizedStatus = "pendente" | "em_preparo" | "a_caminho" | "concluido" | "cancelado";
 
-  if (!session?.user) {
-    return {
-      redirect: {
-        destination: "/admin/login",
-        permanent: false,
-      },
-    };
+export const getServerSideProps: GetServerSideProps = async (context) => {
+  const adminRedirect = await requireAdminPageSession(context);
+  if (adminRedirect) {
+    return adminRedirect;
   }
 
   return { props: {} };
@@ -48,18 +48,102 @@ function formatTime(value: string) {
   });
 }
 
-function getStatusLabel(status: string) {
-  if (status === "completed") {
-    return "Completo";
+function normalizeStatus(status: string): NormalizedStatus {
+  if (status === "pending") {
+    return "pendente";
   }
+
+  if (status === "completed") {
+    return "concluido";
+  }
+
   if (status === "cancelled") {
+    return "cancelado";
+  }
+
+  if (status === "pendente" || status === "em_preparo" || status === "a_caminho" || status === "concluido" || status === "cancelado") {
+    return status;
+  }
+
+  return "pendente";
+}
+
+function getStatusLabel(status: string) {
+  const normalized = normalizeStatus(status);
+
+  if (normalized === "em_preparo") {
+    return "Em preparo";
+  }
+  if (normalized === "a_caminho") {
+    return "A caminho";
+  }
+  if (normalized === "concluido") {
+    return "Concluído";
+  }
+  if (normalized === "cancelado") {
     return "Cancelado";
   }
   return "Pendente";
 }
 
+function getStatusCardClass(status: string) {
+  const normalized = normalizeStatus(status);
+
+  if (normalized === "em_preparo") {
+    return "order-card order-card-status--em_preparo";
+  }
+  if (normalized === "a_caminho") {
+    return "order-card order-card-status--a_caminho";
+  }
+  if (normalized === "concluido") {
+    return "order-card order-card-status--concluido";
+  }
+  if (normalized === "cancelado") {
+    return "order-card order-card-status--cancelado";
+  }
+  return "order-card order-card-status--pendente";
+}
+
+function getNextStatus(status: string): NormalizedStatus | null {
+  const normalized = normalizeStatus(status);
+
+  if (normalized === "pendente") {
+    return "em_preparo";
+  }
+
+  if (normalized === "em_preparo") {
+    return "a_caminho";
+  }
+
+  if (normalized === "a_caminho") {
+    return "concluido";
+  }
+
+  return null;
+}
+
 function normalizePhoneForWhatsApp(phone: string) {
   return phone.replace(/[^\d]/g, "");
+}
+
+function getDeliveryLabel(method: string) {
+  return method === "delivery" ? "Entrega" : "Retirada no local";
+}
+
+function getPaymentLabel(method: string) {
+  if (method === "card") {
+    return "Cartão";
+  }
+
+  if (method === "pix") {
+    return "Pix";
+  }
+
+  return "Dinheiro";
+}
+
+function hasConfirmedPayment(order: DashboardData["orders"][number]) {
+  return Boolean(order.payment_confirmed_at);
 }
 
 export default function AdminDashboardPage() {
@@ -115,6 +199,10 @@ export default function AdminDashboardPage() {
 
   const orders = data?.orders ?? [];
   const items = data?.items ?? [];
+  const activeOrders = orders.filter((order) => {
+    const normalizedStatus = normalizeStatus(order.status);
+    return normalizedStatus !== "concluido" && normalizedStatus !== "cancelado";
+  });
 
   async function markOrderAsViewed(orderId: number) {
     try {
@@ -156,6 +244,88 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function updateOrderStatus(orderId: number, status: NormalizedStatus) {
+    try {
+      const response = await fetch(`/api/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { id?: number; status?: string } | null;
+
+      if (!response.ok || !payload?.id || !payload.status) {
+        return;
+      }
+
+      setData((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          orders: current.orders.map((order) =>
+            order.id === payload.id
+              ? {
+                  ...order,
+                  status: payload.status ?? order.status,
+                }
+              : order,
+          ),
+        };
+      });
+
+      window.dispatchEvent(new Event("admin-orders-updated"));
+      window.dispatchEvent(new Event("admin-sales-updated"));
+    } catch {
+      // Keep the dashboard usable even if the update fails.
+    }
+  }
+
+  async function confirmPayment(orderId: number) {
+    try {
+      const response = await fetch(`/api/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "confirm_payment" }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as {
+        id?: number;
+        payment_confirmed_at?: string | null;
+      } | null;
+
+      if (!response.ok || !payload?.id) {
+        return;
+      }
+
+      setData((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          orders: current.orders.map((order) =>
+            order.id === payload.id
+              ? {
+                  ...order,
+                  payment_confirmed_at: payload.payment_confirmed_at ?? order.payment_confirmed_at ?? new Date().toISOString(),
+                }
+              : order,
+          ),
+        };
+      });
+    } catch {
+      // Keep the dashboard usable even if the update fails.
+    }
+  }
+
   function openOrder(order: SelectedOrder) {
     if (!order) {
       return;
@@ -179,9 +349,11 @@ export default function AdminDashboardPage() {
   }, [items]);
 
   const totalOrders = orders.length;
-  const pendingOrders = orders.filter((order) => order.status === "pending").length;
-  const completedOrders = orders.filter((order) => order.status === "completed").length;
-  const cancelledOrders = orders.filter((order) => order.status === "cancelled").length;
+  const pendingOrders = orders.filter((order) => normalizeStatus(order.status) === "pendente").length;
+  const preparingOrders = orders.filter((order) => normalizeStatus(order.status) === "em_preparo").length;
+  const onWayOrders = orders.filter((order) => normalizeStatus(order.status) === "a_caminho").length;
+  const completedOrders = orders.filter((order) => normalizeStatus(order.status) === "concluido").length;
+  const cancelledOrders = orders.filter((order) => normalizeStatus(order.status) === "cancelado").length;
 
   return (
     <AdminLayout title="Dashboard" subtitle="Visão geral dos pedidos realizados hoje.">
@@ -199,8 +371,22 @@ export default function AdminDashboardPage() {
             </div>
           </article>
 
+          <article className="dashboard-stat dashboard-stat--preparing">
+            <div className="dashboard-stat-label">Em preparo</div>
+            <div className="dashboard-stat-value" style={{ color: "var(--warning)" }}>
+              {preparingOrders}
+            </div>
+          </article>
+
+          <article className="dashboard-stat dashboard-stat--onway">
+            <div className="dashboard-stat-label">A caminho</div>
+            <div className="dashboard-stat-value" style={{ color: "var(--brand)" }}>
+              {onWayOrders}
+            </div>
+          </article>
+
           <article className="dashboard-stat dashboard-stat--completed">
-            <div className="dashboard-stat-label">Completos</div>
+            <div className="dashboard-stat-label">Concluídos</div>
             <div className="dashboard-stat-value" style={{ color: "var(--success)" }}>
               {completedOrders}
             </div>
@@ -225,36 +411,69 @@ export default function AdminDashboardPage() {
           </div>
 
           <div className="orders-grid">
-            {orders.map((order) => {
-              const statusClass =
-                order.status === "completed"
-                  ? "order-card order-card--completed"
-                  : order.status === "cancelled"
-                    ? "order-card order-card--cancelled"
-                    : "order-card order-card--pending";
+            {activeOrders.length > 0 ? (
+              activeOrders.map((order) => {
+              const normalizedStatus = normalizeStatus(order.status);
+              const nextStatus = getNextStatus(normalizedStatus);
+              const statusClass = getStatusCardClass(normalizedStatus);
+              const statusLabel = getStatusLabel(normalizedStatus);
+              const waitingPix = order.payment_method === "pix" && normalizedStatus === "pendente" && !hasConfirmedPayment(order);
+              const confirmedPix = order.payment_method === "pix" && normalizedStatus === "pendente" && hasConfirmedPayment(order);
 
               return (
-                <button
+                <div
                   key={order.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => openOrder(order)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      openOrder(order);
+                    }
+                  }}
                   className={statusClass}
                   style={{
                     textAlign: "left",
                     width: "100%",
                     padding: 0,
                     overflow: "hidden",
+                    cursor: "pointer",
                   }}
                 >
                   <div style={{ padding: 18 }}>
                     <div className="order-card-top">
                       <div>
                         <strong>Pedido #{order.id}</strong>
+                        {order.order_code ? (
+                          <div className="muted" style={{ marginTop: 4, fontSize: 12, fontWeight: 700 }}>
+                            Código: {order.order_code}
+                          </div>
+                        ) : null}
                         <div className="muted" style={{ marginTop: 6 }}>
                           Cliente: {order.client_name || "Sem nome"}
                         </div>
                       </div>
-                      <span className="pill">{getStatusLabel(order.status)}</span>
+                      <div style={{ display: "grid", justifyItems: "end", gap: 8 }}>
+                        <span className={`pill${normalizedStatus === "concluido" ? " order-status-pill--success" : ""}`}>
+                          {statusLabel}
+                        </span>
+                        {waitingPix ? (
+                          <span className="admin-order-pix-badge">
+                            <span className="material-symbols-outlined" aria-hidden="true">
+                              qr_code_2
+                            </span>
+                            Aguardando PIX
+                          </span>
+                        ) : confirmedPix ? (
+                          <span className="admin-order-pix-badge admin-order-pix-badge--confirmed">
+                            <span className="material-symbols-outlined" aria-hidden="true">
+                              check_circle
+                            </span>
+                            Pagamento confirmado
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
 
                     <div className="order-card-meta">
@@ -276,10 +495,61 @@ export default function AdminDashboardPage() {
                       <span className="muted">Ver detalhes</span>
                       <span style={{ fontSize: 22, lineHeight: 1 }}>›</span>
                     </div>
+
+                    {normalizedStatus !== "concluido" && normalizedStatus !== "cancelado" ? (
+                      <div className="order-card-actions">
+                        {waitingPix ? (
+                          <button
+                            className="btn btn-primary"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void confirmPayment(order.id);
+                            }}
+                          >
+                            Confirmar pagamento
+                          </button>
+                        ) : null}
+                        {nextStatus ? (
+                          <button
+                            className="btn btn-primary"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void updateOrderStatus(order.id, nextStatus);
+                            }}
+                          >
+                            {normalizedStatus === "pendente"
+                              ? "Iniciar preparo"
+                              : normalizedStatus === "em_preparo"
+                                ? "A caminho"
+                                : "Concluído"}
+                          </button>
+                        ) : null}
+                        <button
+                          className="btn btn-ghost"
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void updateOrderStatus(order.id, "cancelado");
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                </button>
+                </div>
               );
-            })}
+              })
+            ) : (
+              <div className="public-orders-empty" style={{ gridColumn: "1 / -1" }}>
+                <strong>Nenhum pedido ativo no momento.</strong>
+                <span className="subtitle" style={{ margin: 0 }}>
+                  Pedidos concluídos saem do dashboard automaticamente.
+                </span>
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -317,6 +587,7 @@ export default function AdminDashboardPage() {
                 <span className="pill">Detalhes do pedido</span>
                 <h3 style={{ margin: "10px 0 4px" }}>Pedido #{selectedOrder.id}</h3>
                 <div className="muted" style={{ display: "grid", gap: 4 }}>
+                  {selectedOrder.order_code ? <span>Código: {selectedOrder.order_code}</span> : null}
                   <span>{selectedOrder.client_name || "Sem nome"}</span>
                   {selectedOrder.client_phone ? (
                     <a
@@ -358,7 +629,53 @@ export default function AdminDashboardPage() {
                 <div className="muted">Horário</div>
                 <strong>{formatTime(selectedOrder.created_at)}</strong>
               </div>
+              <div className="card card-pad">
+                <div className="muted">Entrega</div>
+                <strong>{getDeliveryLabel(selectedOrder.delivery_method)}</strong>
+                {selectedOrder.delivery_method === "delivery" && selectedOrder.delivery_address ? (
+                  <div className="subtitle" style={{ marginTop: 4 }}>
+                    {selectedOrder.delivery_address}
+                  </div>
+                ) : null}
+              </div>
+              <div className="card card-pad">
+                <div className="muted">Pagamento</div>
+                <strong>{getPaymentLabel(selectedOrder.payment_method)}</strong>
+              </div>
             </div>
+
+            {selectedOrder.payment_method === "pix" && normalizeStatus(selectedOrder.status) === "pendente" && !selectedOrder.payment_confirmed_at ? (
+              <section className="card card-pad" style={{ display: "grid", gap: 12 }}>
+                <div>
+                  <h4 className="section-title" style={{ marginBottom: 4 }}>
+                    Confirmação de pagamento
+                  </h4>
+                  <p className="subtitle" style={{ margin: 0 }}>
+                    Use este botão quando o cliente confirmar que já pagou o PIX.
+                  </p>
+                </div>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => {
+                    void confirmPayment(selectedOrder.id);
+                  }}
+                >
+                  Confirmar pagamento
+                </button>
+              </section>
+            ) : selectedOrder.payment_method === "pix" && normalizeStatus(selectedOrder.status) === "pendente" && selectedOrder.payment_confirmed_at ? (
+              <section className="card card-pad" style={{ display: "grid", gap: 12 }}>
+                <div>
+                  <h4 className="section-title" style={{ marginBottom: 4 }}>
+                    Pagamento confirmado
+                  </h4>
+                  <p className="subtitle" style={{ margin: 0 }}>
+                    O pedido continua pendente no dashboard até o preparo ser iniciado.
+                  </p>
+                </div>
+              </section>
+            ) : null}
 
             <section className="card card-pad">
               <h4 className="section-title">Itens do pedido</h4>

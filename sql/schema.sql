@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
   name VARCHAR(150) NOT NULL,
   price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+  cost_cents INTEGER NOT NULL DEFAULT 0 CHECK (cost_cents >= 0),
   quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
   active BOOLEAN NOT NULL DEFAULT TRUE,
   image_path VARCHAR(255),
@@ -31,6 +32,9 @@ ALTER TABLE products
 
 ALTER TABLE products
   ADD COLUMN IF NOT EXISTS category_id INTEGER;
+
+ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS cost_cents INTEGER NOT NULL DEFAULT 0;
 
 DO $$
 BEGIN
@@ -47,12 +51,32 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS orders (
   id SERIAL PRIMARY KEY,
+  order_code VARCHAR(4) NOT NULL,
+  order_code_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  session_id VARCHAR(36),
   client_name VARCHAR(120),
   client_phone VARCHAR(30),
-  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  delivery_method VARCHAR(20) NOT NULL DEFAULT 'pickup',
+  delivery_address TEXT,
+  payment_method VARCHAR(20) NOT NULL DEFAULT 'cash',
+  payment_confirmed_at TIMESTAMP,
+  status VARCHAR(30) NOT NULL DEFAULT 'pendente',
+  pending_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  preparing_at TIMESTAMP,
+  on_way_at TIMESTAMP,
+  completed_at TIMESTAMP,
+  cancelled_at TIMESTAMP,
   total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
   notes TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS orders_order_code_unique
+  ON orders(order_code_date, order_code);
+
+CREATE TABLE IF NOT EXISTS order_code_sequences (
+  code_date DATE PRIMARY KEY,
+  last_sequence INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS order_items (
@@ -74,26 +98,7 @@ CREATE TABLE IF NOT EXISTS losses (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO categories (name)
-SELECT 'Bebidas'
-WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = 'Bebidas');
-
-INSERT INTO categories (name)
-SELECT 'Fritos'
-WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = 'Fritos');
-
-INSERT INTO categories (name)
-SELECT 'Assados'
-WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = 'Assados');
-
-INSERT INTO products (name, price_cents, quantity, active, category_id)
-SELECT 'Coxinha', 700, 30, TRUE, (SELECT id FROM categories WHERE name = 'Fritos' LIMIT 1)
-WHERE NOT EXISTS (SELECT 1 FROM products WHERE name = 'Coxinha');
-
-INSERT INTO products (name, price_cents, quantity, active, category_id)
-SELECT 'Kibe', 700, 25, TRUE, (SELECT id FROM categories WHERE name = 'Fritos' LIMIT 1)
-WHERE NOT EXISTS (SELECT 1 FROM products WHERE name = 'Kibe');
-
-INSERT INTO products (name, price_cents, quantity, active, category_id)
-SELECT 'Pastel', 900, 20, TRUE, (SELECT id FROM categories WHERE name = 'Fritos' LIMIT 1)
-WHERE NOT EXISTS (SELECT 1 FROM products WHERE name = 'Pastel');
+CREATE TABLE IF NOT EXISTS settings (
+  key VARCHAR PRIMARY KEY,
+  value TEXT
+);

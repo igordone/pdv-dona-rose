@@ -1,14 +1,14 @@
 ﻿import type { GetServerSideProps } from "next";
-import { getServerSession } from "next-auth/next";
 import { useEffect, useMemo, useState } from "react";
 import { CldImage } from "next-cloudinary";
-import { authOptions } from "../api/auth/[...nextauth]";
+import { requireAdminPageSession } from "../../lib/admin-access";
 import { AdminLayout } from "../../components/AdminLayout";
 
 type ProductItem = {
   id: number;
   name: string;
   price_cents: number;
+  cost_cents: number;
   quantity: number;
   active: boolean;
   image_path: string | null;
@@ -42,15 +42,9 @@ function getCategoryIcon(category: string) {
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerSession(context.req, context.res, authOptions);
-
-  if (!session?.user) {
-    return {
-      redirect: {
-        destination: "/admin/login",
-        permanent: false,
-      },
-    };
+  const adminRedirect = await requireAdminPageSession(context);
+  if (adminRedirect) {
+    return adminRedirect;
   }
 
   return { props: {} };

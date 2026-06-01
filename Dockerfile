@@ -2,8 +2,8 @@ FROM node:22-alpine AS base
 WORKDIR /app
 
 FROM base AS deps
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 FROM base AS runner
 ENV NODE_ENV=production
@@ -17,4 +17,3 @@ RUN npm run build
 EXPOSE 3000
 
 CMD ["npm", "run", "start"]
-

@@ -1,9 +1,7 @@
 import { randomUUID } from "crypto";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "../auth/[...nextauth]";
 import { getPool, query } from "../../../lib/db";
-import { ensureCatalogSchema } from "../../../lib/schema";
+import { requireAdminApiSession } from "../../../lib/admin-access";
 
 class HttpError extends Error {
   status: number;
@@ -12,17 +10,6 @@ class HttpError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-async function ensureAdmin(req: NextApiRequest, res: NextApiResponse) {
-  const session = await getServerSession(req, res, authOptions);
-
-  if (!session?.user) {
-    res.status(401).json({ error: "Não autenticado." });
-    return null;
-  }
-
-  return session;
 }
 
 function getLocalDateKey(date = new Date()) {
@@ -50,12 +37,10 @@ function parseLossItems(body: Record<string, unknown>) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const session = await ensureAdmin(req, res);
+  const session = await requireAdminApiSession(req, res);
   if (!session) {
     return;
   }
-
-  await ensureCatalogSchema();
 
   if (req.method === "GET") {
     const result = await query<{
@@ -79,8 +64,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               COALESCE(l.product_name, p.name) AS product_name,
               l.quantity,
               l.observation,
-              COALESCE(NULLIF(l.unit_price_cents, 0), p.price_cents, 0) AS unit_price_cents,
-              COALESCE(NULLIF(l.unit_price_cents, 0), p.price_cents, 0) * l.quantity AS total_cents,
+              COALESCE(NULLIF(p.cost_cents, 0), NULLIF(l.unit_price_cents, 0), 0) AS unit_price_cents,
+              COALESCE(NULLIF(p.cost_cents, 0), NULLIF(l.unit_price_cents, 0), 0) * l.quantity AS total_cents,
               l.created_at
        FROM losses l
        LEFT JOIN products p ON p.id = l.product_id
@@ -126,8 +111,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }> = [];
 
       for (const item of items) {
-        const productResult = await client.query<{ id: number; name: string; price_cents: number }>(
-          "SELECT id, name, price_cents FROM products WHERE id = $1 LIMIT 1",
+        const productResult = await client.query<{ id: number; name: string; cost_cents: number }>(
+          "SELECT id, name, cost_cents FROM products WHERE id = $1 LIMIT 1",
           [item.productId],
         );
 
@@ -161,7 +146,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             )
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id, batch_id, operator_name, loss_date::text AS loss_date, product_id, product_name, quantity, observation, unit_price_cents, created_at`,
-          [product.id, product.name, item.quantity, observation, product.price_cents ?? 0, batchId, operatorName, lossDate],
+          [product.id, product.name, item.quantity, observation, product.cost_cents ?? 0, batchId, operatorName, lossDate],
         );
 
         await client.query(

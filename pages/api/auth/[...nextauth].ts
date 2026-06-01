@@ -7,6 +7,39 @@ function isTruthy(value: string | undefined) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isStrongSecret(value: string | undefined) {
+  const secret = value?.trim() ?? "";
+
+  return (
+    secret.length >= 32 &&
+    !/^change-me/i.test(secret) &&
+    !/^your-.*$/i.test(secret) &&
+    !/^replace-me/i.test(secret)
+  );
+}
+
+function assertProductionAuthConfig() {
+  if (process.env.NODE_ENV !== "production" || process.env.NEXT_PHASE === "phase-production-build") {
+    return;
+  }
+
+  if (!isStrongSecret(process.env.NEXTAUTH_SECRET)) {
+    throw new Error("NEXTAUTH_SECRET must be a strong random value in production.");
+  }
+
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim() ?? "";
+
+  if (
+    adminPassword.length < 12 ||
+    /^change-me/i.test(adminPassword) ||
+    /^admin123$/i.test(adminPassword)
+  ) {
+    throw new Error("ADMIN_PASSWORD must be replaced with a strong value in production.");
+  }
+}
+
+assertProductionAuthConfig();
+
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",

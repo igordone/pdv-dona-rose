@@ -1,18 +1,6 @@
 ﻿import type { NextApiRequest, NextApiResponse } from "next";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "../auth/[...nextauth]";
 import { getPool, query } from "../../../lib/db";
-
-async function ensureAdmin(req: NextApiRequest, res: NextApiResponse) {
-  const session = await getServerSession(req, res, authOptions);
-
-  if (!session?.user) {
-    res.status(401).json({ error: "Não autenticado." });
-    return null;
-  }
-
-  return session;
-}
+import { requireAdminApiSession } from "../../../lib/admin-access";
 
 function parseId(value: unknown) {
   const parsed = Number(value);
@@ -20,13 +8,12 @@ function parseId(value: unknown) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const session = await ensureAdmin(req, res);
+  const session = await requireAdminApiSession(req, res);
   if (!session) {
     return;
   }
 
-  try {
-    if (req.method === "GET") {
+  if (req.method === "GET") {
       const unreadResult = await query<{ unread_count: number }>(
         `SELECT COUNT(*)::int AS unread_count
          FROM orders
@@ -40,15 +27,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const todayResult = await query<{
         id: number;
+        order_code: string | null;
         client_name: string | null;
         client_phone: string | null;
+        delivery_method: string;
+        delivery_address: string | null;
+        payment_method: string;
+        payment_confirmed_at: string | null;
         status: string;
         total_cents: number;
         notes: string | null;
         created_at: string;
         viewed_at: string | null;
       }>(
-        `SELECT id, client_name, client_phone, status, total_cents, notes, created_at, viewed_at
+        `SELECT id, order_code, client_name, client_phone, delivery_method, delivery_address, payment_method, payment_confirmed_at,
+                CASE
+                  WHEN status = 'pending' THEN 'pendente'
+                  WHEN status = 'completed' THEN 'concluido'
+                  WHEN status = 'cancelled' THEN 'cancelado'
+                  ELSE status
+                END AS status,
+                total_cents, notes, created_at, viewed_at
          FROM orders
          WHERE created_at::date = CURRENT_DATE
          ORDER BY created_at DESC`,
@@ -106,9 +105,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    return res.status(405).json({ error: "Método não permitido." });
-  } catch (error) {
-    console.error("admin_orders_error", error);
-    return res.status(500).json({ error: "Falha ao carregar os pedidos." });
-  }
+  return res.status(405).json({ error: "Método não permitido." });
 }

@@ -1,12 +1,12 @@
-import type { GetServerSideProps } from "next";
-import { getServerSession } from "next-auth/next";
+﻿import type { GetServerSideProps } from "next";
 import { useEffect, useMemo, useState } from "react";
-import { authOptions } from "../api/auth/[...nextauth]";
 import { AdminLayout } from "../../components/AdminLayout";
+import { requireAdminPageSession } from "../../lib/admin-access";
 
 type ResponseData = {
   orders: Array<{
     id: number;
+    order_code: string | null;
     client_name: string | null;
     client_phone: string | null;
     status: string;
@@ -54,15 +54,9 @@ type LossGroup = {
 };
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getServerSession(context.req, context.res, authOptions);
-
-  if (!session?.user) {
-    return {
-      redirect: {
-        destination: "/admin/login",
-        permanent: false,
-      },
-    };
+  const adminRedirect = await requireAdminPageSession(context);
+  if (adminRedirect) {
+    return adminRedirect;
   }
 
   return { props: {} };
@@ -90,6 +84,16 @@ function toDateKey(value: string) {
   return value.slice(0, 10);
 }
 
+function formatDateLabel(value: string) {
+  const [year, month, day] = value.split("-");
+
+  if (!year || !month || !day) {
+    return value;
+  }
+
+  return `${day}/${month}/${year}`;
+}
+
 export default function VendasPage() {
   const [data, setData] = useState<ResponseData | null>(null);
   const [losses, setLosses] = useState<LossItem[]>([]);
@@ -97,20 +101,49 @@ export default function VendasPage() {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    void Promise.all([fetch("/api/admin/sales"), fetch("/api/admin/losses")])
-      .then(async ([salesResponse, lossesResponse]) => {
-        const [salesPayload, lossesPayload] = (await Promise.all([
-          salesResponse.json() as Promise<ResponseData>,
-          lossesResponse.json() as Promise<LossResponse>,
-        ])) as [ResponseData, LossResponse];
+    let mounted = true;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
 
-        setData(salesPayload);
-        setLosses(lossesPayload.items ?? []);
-      })
-      .catch(() => {
-        setData(null);
-        setLosses([]);
-      });
+    const loadData = () => {
+      void Promise.all([fetch("/api/admin/sales"), fetch("/api/admin/losses")])
+        .then(async ([salesResponse, lossesResponse]) => {
+          const [salesPayload, lossesPayload] = (await Promise.all([
+            salesResponse.json() as Promise<ResponseData>,
+            lossesResponse.json() as Promise<LossResponse>,
+          ])) as [ResponseData, LossResponse];
+
+          if (!mounted) {
+            return;
+          }
+
+          setData(salesPayload);
+          setLosses(lossesPayload.items ?? []);
+        })
+        .catch(() => {
+          if (!mounted) {
+            return;
+          }
+
+          setData(null);
+          setLosses([]);
+        });
+    };
+
+    const handleSalesUpdated = () => {
+      loadData();
+    };
+
+    loadData();
+    intervalId = setInterval(loadData, 10000);
+    window.addEventListener("admin-sales-updated", handleSalesUpdated);
+
+    return () => {
+      mounted = false;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+      window.removeEventListener("admin-sales-updated", handleSalesUpdated);
+    };
   }, []);
 
   const groupedItems = useMemo(() => {
@@ -131,14 +164,33 @@ export default function VendasPage() {
       itemCounts.set(item.product_name, (itemCounts.get(item.product_name) ?? 0) + item.quantity);
     }
     const topItem = Array.from(itemCounts.entries()).sort((a, b) => b[1] - a[1])[0];
-    const average = totalOrders ? totalCents / totalOrders : 0;
+    const dateKeys = Array.from(new Set(orders.map((order) => order.order_date || toDateKey(order.created_at)))).sort();
+    const firstDateKey = dateKeys[0] ?? null;
+    const lastDateKey = dateKeys[dateKeys.length - 1] ?? null;
+    const periodDays =
+      firstDateKey && lastDateKey
+        ? Math.max(
+            1,
+            Math.floor(
+              (new Date(`${lastDateKey}T12:00:00`).getTime() - new Date(`${firstDateKey}T12:00:00`).getTime()) /
+                86400000,
+            ) + 1,
+          )
+        : 0;
+    const averageOrdersPerDay = periodDays ? totalOrders / periodDays : 0;
 
     return {
       totalCents,
       totalOrders,
-      average,
+      averageOrdersPerDay,
       topItem: topItem?.[0] ?? "Sem dados",
       topCount: topItem?.[1] ?? 0,
+      periodLabel:
+        firstDateKey && lastDateKey
+          ? firstDateKey === lastDateKey
+            ? formatDateLabel(firstDateKey)
+            : `${formatDateLabel(firstDateKey)} a ${formatDateLabel(lastDateKey)}`
+          : "Sem período",
     };
   }, [data?.items, data?.orders]);
 
@@ -182,15 +234,14 @@ export default function VendasPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
             gap: 12,
             marginBottom: 2,
           }}
         >
           {[
-            { label: "Total na semana", value: `R$ ${(summary.totalCents / 100).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, sub: "+8% vs semana anterior" },
-            { label: "Pedidos", value: String(summary.totalOrders), sub: "média 7,7 / dia" },
-            { label: "Ticket médio", value: `R$ ${(summary.average / 100).toFixed(2)}`, sub: "+R$ 2,10 vs anterior" },
+            { label: "Total no período", value: `R$ ${(summary.totalCents / 100).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, sub: summary.periodLabel },
+            { label: "Pedidos", value: String(summary.totalOrders), sub: `${summary.averageOrdersPerDay.toFixed(1)} pedidos/dia` },
             { label: "Item mais vendido", value: summary.topItem, sub: `${summary.topCount} unidades` },
           ].map((stat) => (
             <article
@@ -208,7 +259,7 @@ export default function VendasPage() {
               <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", letterSpacing: -0.3 }}>
                 {stat.value}
               </div>
-              <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{stat.sub}</div>
+              {stat.sub ? <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{stat.sub}</div> : null}
             </article>
           ))}
         </div>
@@ -384,7 +435,10 @@ export default function VendasPage() {
                             background: orderIndex % 2 === 0 ? "white" : "rgba(255, 251, 244, 0.72)",
                           }}
                         >
-                          <div style={{ fontWeight: 700 }}>#{order.id}</div>
+                          <div style={{ display: "grid", gap: 2 }}>
+                            <div style={{ fontWeight: 700 }}>#{order.id}</div>
+                            {order.order_code ? <div className="muted" style={{ fontSize: 12 }}>Código: {order.order_code}</div> : null}
+                          </div>
                           <div>{formatTime(order.created_at)}</div>
                           <div className="muted" style={{ lineHeight: 1.35 }}>
                             {itemsList || "Sem itens"}
@@ -446,9 +500,10 @@ export default function VendasPage() {
               <div>
                 <span className="pill">Detalhes do pedido</span>
                 <h3 style={{ margin: "10px 0 4px" }}>Pedido #{selectedOrder.id}</h3>
-                <div className="muted">
-                  {selectedOrder.client_name || "Sem nome"}
-                  {selectedOrder.client_phone ? ` · ${selectedOrder.client_phone}` : ""}
+                <div className="muted" style={{ display: "grid", gap: 4 }}>
+                  {selectedOrder.order_code ? <span>Código: {selectedOrder.order_code}</span> : null}
+                  <span>{selectedOrder.client_name || "Sem nome"}</span>
+                  {selectedOrder.client_phone ? <span>{selectedOrder.client_phone}</span> : null}
                 </div>
               </div>
               <button className="btn btn-ghost" type="button" onClick={() => setSelectedOrder(null)}>
@@ -505,3 +560,6 @@ export default function VendasPage() {
     </AdminLayout>
   );
 }
+
+
+

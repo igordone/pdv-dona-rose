@@ -6,4 +6,7 @@ coverage
 .env.local
 .DS_Store
 docker-data
-
+dev.log
+_handoff_ref/
+screenshots/
+tsconfig.tsbuildinfo

@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { query } from "../../lib/db";
-import { ensureCatalogSchema } from "../../lib/schema";
 
 type ResponseBody =
   | {
@@ -26,8 +25,6 @@ export default async function handler(
   }
 
   try {
-    await ensureCatalogSchema();
-
     const result = await query<{
       id: number;
       name: string;
