@@ -70,7 +70,6 @@ O fluxo foi pensado para operação em condomínios, onde o cliente faz o pedido
 
 ## Segurança e operação
 
-- O projeto não expõe `.env` no Git; apenas `.env.example` vai para o repositório.
 - O endpoint público de pedidos tem rate limit para reduzir spam.
 - O PIX mostrado ao cliente é somente informativo e depende de confirmação manual do admin.
 - O acesso administrativo é protegido por sessão e verificação de papel.
