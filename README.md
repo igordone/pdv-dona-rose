@@ -1,8 +1,8 @@
 <div align="center">
 
-# PDV Dona Rose
+# Dona Rose Salgados
 
-**Sistema completo de pedidos, gestão de cardápio e controle operacional para comércio de salgados.**
+**Sistema de pedidos, gestão de cardápio e controle operacional.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
@@ -16,7 +16,7 @@
 
 ## Visão Geral
 
-O PDV Dona Rose é um sistema web full-stack desenvolvido para gerenciar o ciclo completo de um estabelecimento de salgados — desde a visualização do cardápio pelo cliente até o controle operacional pelo administrador.
+Essa aplicação foi desenvolvida para solucionar uma necessidade real do comércio Dona Rose. Trata-se de um sistema web full-stack criado para gerenciar todo o ciclo operacional do estabelecimento, desde a apresentação do cardápio e realização de pedidos pelos clientes até o gerenciamento e controle das operações pelo administrador.
 
 O projeto é dividido em duas frentes:
 
