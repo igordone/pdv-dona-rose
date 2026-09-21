@@ -13,6 +13,7 @@ type DashboardData = {
     delivery_address: string | null;
     payment_method: string;
     payment_confirmed_at: string | null;
+    payment_status: string | null;
     status: string;
     total_cents: number;
     notes: string | null;
@@ -143,7 +144,7 @@ function getPaymentLabel(method: string) {
 }
 
 function hasConfirmedPayment(order: DashboardData["orders"][number]) {
-  return Boolean(order.payment_confirmed_at);
+  return Boolean(order.payment_confirmed_at) || order.payment_status === "aprovado";
 }
 
 export default function AdminDashboardPage() {
@@ -417,8 +418,9 @@ export default function AdminDashboardPage() {
               const nextStatus = getNextStatus(normalizedStatus);
               const statusClass = getStatusCardClass(normalizedStatus);
               const statusLabel = getStatusLabel(normalizedStatus);
-              const waitingPix = order.payment_method === "pix" && normalizedStatus === "pendente" && !hasConfirmedPayment(order);
+              const waitingPix = order.payment_method === "pix" && normalizedStatus === "pendente" && !hasConfirmedPayment(order) && order.payment_status !== "fallback";
               const confirmedPix = order.payment_method === "pix" && normalizedStatus === "pendente" && hasConfirmedPayment(order);
+              const fallbackPix = order.payment_method === "pix" && order.payment_status === "fallback";
 
               return (
                 <div
@@ -471,6 +473,13 @@ export default function AdminDashboardPage() {
                               check_circle
                             </span>
                             Pagamento confirmado
+                          </span>
+                        ) : fallbackPix ? (
+                          <span className="admin-order-pix-badge" style={{ background: "rgba(251, 191, 36, 0.15)", color: "var(--warning)" }}>
+                            <span className="material-symbols-outlined" aria-hidden="true">
+                              warning
+                            </span>
+                            PIX Manual
                           </span>
                         ) : null}
                       </div>

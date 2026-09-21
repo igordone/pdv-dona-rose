@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getPool } from "../../lib/db";
 import { consumeRateLimit, getRequestRateLimitKey } from "../../lib/rate-limit";
+import { createPixPayment } from "../../lib/mercadopago";
 
 type Body = {
   sessionId?: string;
@@ -189,10 +190,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       await client.query("COMMIT");
 
+      let paymentQrCode: string | null = null;
+      let paymentCopiaECola: string | null = null;
+      let paymentId: string | null = null;
+      let fallback = false;
+
+      if (paymentMethod === "pix") {
+        const clientEmail = `cliente${orderId}@donarose.com.br`;
+
+        const mpResult = await createPixPayment({
+          orderId,
+          orderCode,
+          totalCents,
+          clientEmail,
+        });
+
+        if (mpResult.ok) {
+          paymentQrCode = mpResult.qrCodeBase64 || null;
+          paymentCopiaECola = mpResult.copiaECola || null;
+          paymentId = mpResult.paymentId || null;
+
+          await getPool().query(
+            `UPDATE orders
+             SET payment_qr_code = $1,
+                 payment_copia_e_cola = $2,
+                 payment_id = $3,
+                 payment_external_reference = $4
+             WHERE id = $5`,
+            [paymentQrCode, paymentCopiaECola, paymentId, String(orderId), orderId],
+          );
+        } else {
+          fallback = true;
+          console.error("mercadopago_fallback", mpResult.error);
+
+          await getPool().query(
+            `UPDATE orders SET payment_status = 'fallback' WHERE id = $1`,
+            [orderId],
+          );
+        }
+      }
+
       return res.status(201).json({
         orderId,
         orderCode,
         totalCents,
+        paymentQrCode,
+        paymentCopiaECola,
+        fallback,
         message: "Pedido enviado com sucesso.",
       });
     } catch (error) {

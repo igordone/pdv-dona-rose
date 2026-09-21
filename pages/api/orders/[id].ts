@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { query } from "../../../lib/db";
+import { getPool, query } from "../../../lib/db";
 
 function parseId(value: unknown) {
   const parsed = Number(value);
@@ -14,10 +14,6 @@ function normalizeStatus(status: string) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "Método não permitido." });
-  }
-
   const id = parseId(req.query.id);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: "Pedido inválido." });
@@ -34,6 +30,51 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: "Sessão inválida." });
   }
 
+  if (req.method === "PATCH") {
+    const body = req.body as Record<string, unknown>;
+
+    if (body.action !== "cancel") {
+      return res.status(400).json({ error: "Ação inválida." });
+    }
+
+    try {
+      const client = await getPool().connect();
+      try {
+        const result = await client.query<{
+          id: number;
+          status: string;
+        }>(
+          `UPDATE orders
+           SET status = 'cancelado',
+               cancelled_at = COALESCE(cancelled_at, NOW())
+           WHERE id = $1
+             AND session_id = $2
+             AND status IN ('pendente')
+           RETURNING id, status`,
+          [id, sessionId],
+        );
+
+        if (result.rows.length === 0) {
+          return res.status(400).json({ error: "Pedido não pode ser cancelado." });
+        }
+
+        return res.status(200).json({
+          id: result.rows[0].id,
+          status: normalizeStatus(result.rows[0].status),
+        });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error("order_cancel_error", error);
+      return res.status(500).json({ error: "Falha ao cancelar o pedido." });
+    }
+  }
+
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "Método não permitido." });
+  }
+
   try {
     const orderResult = await query<{
       id: number;
@@ -45,6 +86,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       delivery_address: string | null;
       payment_method: string;
       payment_confirmed_at: string | null;
+      payment_status: string | null;
+      payment_link: string | null;
+      payment_qr_code: string | null;
       status: string;
       pending_at: string;
       preparing_at: string | null;
@@ -56,7 +100,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       created_at: string;
     }>(
       `SELECT id, order_code, session_id, client_name, client_phone, delivery_method, delivery_address, payment_method,
-              payment_confirmed_at,
+              payment_confirmed_at, payment_status, payment_link, payment_qr_code,
               CASE
                 WHEN status = 'pending' THEN 'pendente'
                 WHEN status = 'completed' THEN 'concluido'
@@ -77,12 +121,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const itemsResult = await query<{
       order_id: number;
+      product_id: number | null;
       product_name: string;
       quantity: number;
       unit_price_cents: number;
       subtotal_cents: number;
     }>(
-      `SELECT order_id, product_name, quantity, unit_price_cents, subtotal_cents
+      `SELECT order_id, product_id, product_name, quantity, unit_price_cents, subtotal_cents
        FROM order_items
        WHERE order_id = $1
        ORDER BY id ASC`,

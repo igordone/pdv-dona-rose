@@ -20,6 +20,7 @@ type PublicOrderStatus = "pendente" | "em_preparo" | "a_caminho" | "concluido" |
 
 type PublicOrderItem = {
   order_id: number;
+  product_id: number | null;
   product_name: string;
   quantity: number;
   unit_price_cents: number;
@@ -35,6 +36,8 @@ type PublicOrder = {
   delivery_address: string | null;
   payment_method: string;
   payment_confirmed_at: string | null;
+  payment_status: string | null;
+  payment_link: string | null;
   status: PublicOrderStatus;
   pending_at: string;
   preparing_at: string | null;
@@ -71,6 +74,9 @@ type OrderConfirmation = {
   orderCode: string | null;
   totalCents: number;
   paymentMethod: "cash" | "card" | "pix";
+  paymentQrCode?: string | null;
+  paymentCopiaECola?: string | null;
+  fallback?: boolean;
 };
 
 const TRACKED_ORDERS_STORAGE_KEY = "pdv-dona-rose:tracked-orders";
@@ -405,16 +411,51 @@ async function readJsonResponse<T>(response: Response): Promise<T | { error: str
   return (await response.json()) as T | { error: string };
 }
 
+function getEstimatedTime(order: PublicOrder): string | null {
+  if (order.status === "concluido" || order.status === "cancelado") {
+    return null;
+  }
+
+  const createdAt = new Date(order.created_at).getTime();
+  const now = Date.now();
+  const elapsedMinutes = Math.floor((now - createdAt) / 60000);
+
+  if (order.status === "pendente") {
+    const remaining = Math.max(0, 15 - elapsedMinutes);
+    return remaining > 0 ? `Aproximadamente ${remaining} min` : "Aguardando preparo";
+  }
+
+  if (order.status === "em_preparo") {
+    const preparingAt = order.preparing_at ? new Date(order.preparing_at).getTime() : createdAt;
+    const preparingMinutes = Math.floor((now - preparingAt) / 60000);
+    const remaining = Math.max(0, 10 - preparingMinutes);
+    return remaining > 0 ? `Aproximadamente ${remaining} min` : "Pronto para entrega";
+  }
+
+  if (order.status === "a_caminho") {
+    const onWayAt = order.on_way_at ? new Date(order.on_way_at).getTime() : createdAt;
+    const onWayMinutes = Math.floor((now - onWayAt) / 60000);
+    const remaining = Math.max(0, 10 - onWayMinutes);
+    return remaining > 0 ? `Aproximadamente ${remaining} min` : "Chegando";
+  }
+
+  return null;
+}
+
 function SessionOrderCard({
   order,
   items,
   canReopenPix,
   onReopenPix,
+  onCancelOrder,
+  onReorder,
 }: {
   order: PublicOrder;
   items: PublicOrderItem[];
   canReopenPix: boolean;
   onReopenPix: () => void;
+  onCancelOrder: (orderId: number, orderCode?: string | null) => void;
+  onReorder: (items: PublicOrderItem[]) => void;
 }) {
   const statusMeta = getOrderStatusMeta(order.status);
   const isPixAwaitingConfirmation = order.payment_method === "pix" && !order.payment_confirmed_at;
@@ -423,6 +464,7 @@ function SessionOrderCard({
   const orderDateLabel = formatDateLabel(
     order.completed_at ?? order.on_way_at ?? order.preparing_at ?? order.pending_at,
   );
+  const estimatedTime = getEstimatedTime(order);
   const steps: OrderStep[] = [
     {
       key: 1,
@@ -456,13 +498,23 @@ function SessionOrderCard({
         <div className="public-session-order-top-row">
           <div className="public-order-history-heading public-session-order-heading">
             <div className="public-session-order-title-row">
-              <span className="public-session-order-title">Pedido #{order.id}</span>
+              <span className="public-session-order-title">
+                {order.order_code ? `Pedido ${order.order_code}` : "Pedido"}
+              </span>
               <span className={`public-order-status-pill public-order-status-pill--${statusMeta.tone}`}>
                 <span className="material-symbols-outlined" aria-hidden="true">
                   {statusMeta.icon}
                 </span>
                 {statusMeta.label}
               </span>
+              {estimatedTime ? (
+                <span className="public-session-order-meta" style={{ color: "var(--brand)" }}>
+                  <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: 16 }}>
+                    schedule
+                  </span>
+                  {estimatedTime}
+                </span>
+              ) : null}
               <span className="public-session-order-meta">
                 <span className="material-symbols-outlined" aria-hidden="true">
                   confirmation_number
@@ -588,6 +640,44 @@ function SessionOrderCard({
           </button>
         </div>
       ) : null}
+
+      {order.status === "pendente" ? (
+        <div className="public-session-order-reopen-row" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: canReopenPix ? 0 : 8 }}>
+          <div className="public-session-order-reopen-copy">
+            <strong>Cancelar pedido</strong>
+            <span>Apenas pedidos pendentes podem ser cancelados.</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ color: "var(--danger, #dc2626)", border: "1px solid rgba(220,38,38,0.3)" }}
+            onClick={() => {
+              const label = order.order_code ? `Código ${order.order_code}` : `Pedido #${order.id}`;
+              if (window.confirm(`Cancelar o ${label}?`)) {
+                onCancelOrder(order.id, order.order_code);
+              }
+            }}
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
+
+      {order.status === "concluido" ? (
+        <div className="public-session-order-reopen-row" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: canReopenPix ? 0 : 8 }}>
+          <div className="public-session-order-reopen-copy">
+            <strong>Pedir novamente</strong>
+            <span>Adicione os mesmos itens ao carrinho.</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => onReorder(items)}
+          >
+            Pedir novamente
+          </button>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -608,7 +698,8 @@ function OrderConfirmationModal({
   onGoToOrders: () => void;
 }) {
   const isPix = confirmation.paymentMethod === "pix";
-  const pixQrCode = settings.pix_qrcode ?? "";
+  const isFallback = Boolean(confirmation.fallback);
+  const hasQrCode = isPix && !isFallback && Boolean(confirmation.paymentQrCode);
   const pixKey = settings.pix_key ?? "";
   const receiverName = settings.pix_receiver_name ?? "";
   const totalParts = formatPriceParts(confirmation.totalCents);
@@ -629,11 +720,16 @@ function OrderConfirmationModal({
         <div className="public-confirmation-header">
           <div className="public-confirmation-header-copy">
             <span className="pill public-confirmation-pill">Pedido enviado</span>
-            <h2 id="order-confirmation-title" className="section-title" style={{ marginBottom: 0 }}>
-              Pedido #{confirmation.orderId}
-            </h2>
+            {confirmation.orderCode ? (
+              <h2 id="order-confirmation-title" className="section-title" style={{ marginBottom: 0 }}>
+                Código: {confirmation.orderCode}
+              </h2>
+            ) : (
+              <h2 id="order-confirmation-title" className="section-title" style={{ marginBottom: 0 }}>
+                Pedido confirmado
+              </h2>
+            )}
             <div className="public-confirmation-meta">
-              {confirmation.orderCode ? <span>Código: {confirmation.orderCode}</span> : null}
               <span>{formatPaymentMethod(confirmation.paymentMethod)}</span>
             </div>
           </div>
@@ -652,7 +748,7 @@ function OrderConfirmationModal({
           </span>
         </div>
 
-        {isPix ? (
+        {isPix && hasQrCode ? (
           <section className="public-pix-block">
             <div className="public-pix-block-header">
               <div>
@@ -660,16 +756,70 @@ function OrderConfirmationModal({
                   Pague com PIX
                 </h3>
                 <p className="subtitle" style={{ margin: 0 }}>
-                  Após realizar o pagamento, aguarde a confirmação do estabelecimento.
+                  Escaneie o QR Code ou copie o código abaixo para pagar.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 16, padding: "8px 0", justifyItems: "center" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`data:image/png;base64,${confirmation.paymentQrCode}`}
+                alt="QR Code PIX"
+                style={{ width: 220, height: 220, borderRadius: 12 }}
+              />
+
+              {confirmation.paymentCopiaECola ? (
+                <div style={{ width: "100%", display: "grid", gap: 8 }}>
+                  <div className="public-pix-detail-card card" style={{ padding: "12px 14px" }}>
+                    <div className="public-pix-detail-label">Pix Copia e Cola</div>
+                    <div className="public-pix-detail-copy-row">
+                      <div
+                        className="public-pix-detail-value"
+                        style={{ fontSize: 11, wordBreak: "break-all", lineHeight: 1.4 }}
+                      >
+                        {copiedPixKey ? "Código copiado!" : (confirmation.paymentCopiaECola ?? "")}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary public-pix-copy-icon-button"
+                        onClick={onCopyPixKey}
+                        disabled={!confirmation.paymentCopiaECola}
+                        aria-label="Copiar código PIX"
+                        title="Copiar código PIX"
+                      >
+                        <span className="material-symbols-outlined" aria-hidden="true">
+                          {copiedPixKey ? "check" : "content_copy"}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : isPix && isFallback ? (
+          <section className="public-pix-block">
+            <div className="public-pix-block-header">
+              <div>
+                <h3 className="section-title" style={{ marginBottom: 4 }}>
+                  Pague com PIX (Manual)
+                </h3>
+                <p className="subtitle" style={{ margin: 0 }}>
+                  Escaneie o QR Code ou copie a chave e pague o valor exato no app do banco.
                 </p>
               </div>
             </div>
 
             <div className="public-pix-grid">
               <div className="public-pix-qr card">
-                {pixQrCode ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={pixQrCode} alt="QR Code PIX" className="public-pix-qr-image" />
+                {pixKey ? (
+                  <div className="public-pix-qr-empty">
+                    <span className="material-symbols-outlined" aria-hidden="true">
+                      qr_code_2
+                    </span>
+                    <span>Configure o QR Code estático</span>
+                  </div>
                 ) : (
                   <div className="public-pix-qr-empty">
                     <span className="material-symbols-outlined" aria-hidden="true">
@@ -696,7 +846,6 @@ function OrderConfirmationModal({
                       <span className="material-symbols-outlined" aria-hidden="true">
                         content_copy
                       </span>
-                      <span className="sr-only">Copiar chave PIX</span>
                     </button>
                   </div>
                 </div>
@@ -707,12 +856,16 @@ function OrderConfirmationModal({
                 </div>
               </div>
             </div>
+
+            <p className="subtitle" style={{ margin: "12px 0 0", fontSize: 12, textAlign: "center" }}>
+              Após pagar, aguarde a confirmação do estabelecimento.
+            </p>
           </section>
         ) : null}
 
         <div className="public-confirmation-actions">
           <button type="button" className="btn btn-primary" onClick={onGoToOrders}>
-            Já paguei, acompanhar pedido
+            Acompanhar pedido
           </button>
         </div>
       </div>
@@ -723,6 +876,7 @@ function OrderConfirmationModal({
 export default function HomePage() {
   const { toast } = useFeedback();
   const [items, setItems] = useState<Product[]>([]);
+  const [menuLoading, setMenuLoading] = useState(true);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
@@ -746,8 +900,14 @@ export default function HomePage() {
   useEffect(() => {
     void fetch("/api/menu")
       .then((response) => response.json() as Promise<MenuResponse>)
-      .then((data) => setItems(data.items ?? []))
-      .catch(() => setItems([]));
+      .then((data) => {
+        setItems(data.items ?? []);
+        setMenuLoading(false);
+      })
+      .catch(() => {
+        setItems([]);
+        setMenuLoading(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -839,20 +999,55 @@ export default function HomePage() {
 
       const validResponses = responses.filter((entry): entry is PublicOrderResponse => Boolean(entry));
       validResponses.sort((left, right) => right.order.id - left.order.id);
-      setTrackedOrders(validResponses);
+
+      setTrackedOrders((previous) => {
+        for (const entry of validResponses) {
+          const prevEntry = previous.find((p) => p.order.id === entry.order.id);
+          const prevPaymentStatus = prevEntry?.order.payment_status;
+          const newPaymentStatus = entry.order.payment_status;
+
+          if (prevPaymentStatus !== "aprovado" && newPaymentStatus === "aprovado") {
+            toast({
+              title: "Pagamento confirmado!",
+              description: `Pedido ${entry.order.order_code ? `Código ${entry.order.order_code}` : ""} — pagamento aprovado automaticamente.`,
+              variant: "success",
+              durationMs: 6000,
+            });
+          }
+
+          const prevStatus = prevEntry?.order.status;
+          const newStatus = entry.order.status;
+          if (prevStatus && prevStatus !== newStatus && newStatus !== "pendente") {
+            const statusLabels: Record<string, string> = {
+              em_preparo: "Em preparo",
+              a_caminho: "A caminho",
+              concluido: "Concluído",
+              cancelado: "Cancelado",
+            };
+            toast({
+              title: `Pedido ${entry.order.order_code ? `Código ${entry.order.order_code}` : ""}`,
+              description: `Status alterado para "${statusLabels[newStatus] ?? newStatus}".`,
+              variant: newStatus === "cancelado" ? "error" : "success",
+              durationMs: 5000,
+            });
+          }
+        }
+
+        return validResponses;
+      });
     }
 
     void loadTrackedOrders();
 
     const interval = window.setInterval(() => {
       void loadTrackedOrders();
-    }, 10_000);
+    }, 8_000);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [trackedOrderIds]);
+  }, [trackedOrderIds, toast]);
 
   const totalCents = useMemo(
     () => cart.reduce((sum, item) => sum + item.price_cents * item.quantity, 0),
@@ -887,8 +1082,8 @@ export default function HomePage() {
     : null;
   const pendingPixLabel = pendingPixConfirmation
     ? pendingPixConfirmation.orderCode
-      ? `Pedido ${pendingPixConfirmation.orderId} · Código ${pendingPixConfirmation.orderCode}`
-      : `Pedido ${pendingPixConfirmation.orderId}`
+      ? `Pedido ${pendingPixConfirmation.orderCode}`
+      : "Pedido pendente"
     : "";
   const pendingPixIsOpen = Boolean(
     pendingPixConfirmation &&
@@ -910,6 +1105,7 @@ export default function HomePage() {
 
     if (
       currentOrder.payment_confirmed_at ||
+      currentOrder.payment_status === "aprovado" ||
       currentOrder.status === "concluido" ||
       currentOrder.status === "cancelado"
     ) {
@@ -955,29 +1151,113 @@ export default function HomePage() {
     setCopiedPixKey(false);
   }
 
-  async function copyPixKeyToClipboard() {
-    const pixKey = systemSettings.pix_key ?? "";
-    if (!pixKey) {
+  async function cancelOrder(orderId: number, orderCode?: string | null) {
+    const sessionId = getSessionId();
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/orders/${orderId}?session_id=${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel" }),
+      });
+
+      const data = (await response.json().catch(() => null)) as { error?: string; status?: string } | null;
+
+      if (!response.ok) {
+        toast({
+          title: "Não foi possível cancelar",
+          description: data?.error ?? "Tente novamente.",
+          variant: "error",
+        });
+        return;
+      }
+
       toast({
-        title: "Chave PIX indisponível",
-        description: "A configuração ainda não foi preenchida.",
+        title: "Pedido cancelado",
+        description: orderCode
+          ? `Pedido Código ${orderCode} foi cancelado com sucesso.`
+          : `Pedido foi cancelado com sucesso.`,
+        variant: "success",
+      });
+    } catch {
+      toast({
+        title: "Erro ao cancelar",
+        description: "Verifique sua conexão e tente novamente.",
+        variant: "error",
+      });
+    }
+  }
+
+  function reorderItems(orderItems: PublicOrderItem[]) {
+    const newCart: CartItem[] = [];
+
+    for (const orderItem of orderItems) {
+      const menuItem = items.find((product) => product.id === orderItem.product_id);
+      if (!menuItem) {
+        continue;
+      }
+
+      const existing = newCart.find((c) => c.id === menuItem.id);
+      if (existing) {
+        existing.quantity += orderItem.quantity;
+      } else {
+        newCart.push({
+          id: menuItem.id,
+          name: menuItem.name,
+          price_cents: menuItem.price_cents,
+          quantity: orderItem.quantity,
+          image_path: menuItem.image_path ?? null,
+        });
+      }
+    }
+
+    if (newCart.length === 0) {
+      toast({
+        title: "Itens não encontrados",
+        description: "Alguns itens não estão mais disponíveis no cardápio.",
+        variant: "warning",
+      });
+      return;
+    }
+
+    setCart(newCart);
+    setActiveTab("cardapio");
+    toast({
+      title: "Itens adicionados ao carrinho",
+      description: `${newCart.length} item${newCart.length === 1 ? "" : "s"} adicionado${newCart.length === 1 ? "" : "s"}.`,
+      variant: "success",
+    });
+  }
+
+  async function copyPixKeyToClipboard() {
+    const codeToCopy = confirmation?.paymentCopiaECola && !confirmation?.fallback
+      ? confirmation.paymentCopiaECola
+      : systemSettings.pix_key ?? "";
+
+    if (!codeToCopy) {
+      toast({
+        title: "Código PIX indisponível",
+        description: "Aguardando geração do QR Code.",
         variant: "warning",
       });
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(pixKey);
+      await navigator.clipboard.writeText(codeToCopy);
       setCopiedPixKey(true);
       toast({
-        title: "Chave PIX copiada",
-        description: "Você já pode colar a chave no app do banco.",
+        title: "Código PIX copiado",
+        description: "Cole no app do banco para pagar.",
         variant: "success",
       });
     } catch {
       toast({
         title: "Não foi possível copiar",
-        description: "Tente selecionar a chave manualmente.",
+        description: "Tente selecionar o código manualmente.",
         variant: "error",
       });
     }
@@ -1072,6 +1352,9 @@ export default function HomePage() {
         message?: string;
         orderId?: number;
         orderCode?: string;
+        paymentQrCode?: string | null;
+        paymentCopiaECola?: string | null;
+        fallback?: boolean;
       }>(
         response,
       )) as {
@@ -1079,6 +1362,9 @@ export default function HomePage() {
         message?: string;
         orderId?: number;
         orderCode?: string;
+        paymentQrCode?: string | null;
+        paymentCopiaECola?: string | null;
+        fallback?: boolean;
       };
 
       if (!response.ok) {
@@ -1111,6 +1397,9 @@ export default function HomePage() {
         orderCode: data.orderCode ?? null,
         totalCents,
         paymentMethod,
+        paymentQrCode: data.paymentQrCode ?? null,
+        paymentCopiaECola: data.paymentCopiaECola ?? null,
+        fallback: data.fallback ?? false,
       };
 
       setConfirmation(nextConfirmation);
@@ -1266,7 +1555,22 @@ export default function HomePage() {
                 </div>
 
                 <div className="public-menu-grid">
-                  {visibleItems.map((item) => (
+                  {menuLoading
+                    ? Array.from({ length: 6 }).map((_, i) => (
+                        <article key={`skeleton-${i}`} className="card public-menu-card" style={{ overflow: "hidden" }}>
+                          <div style={{ height: 140, background: "var(--surface-2, #f3f4f6)", animation: "pulse 1.5s ease-in-out infinite" }} />
+                          <div style={{ padding: 14, display: "grid", gap: 8 }}>
+                            <div style={{ height: 10, width: 60, background: "var(--surface-2, #f3f4f6)", borderRadius: 4 }} />
+                            <div style={{ height: 14, width: "70%", background: "var(--surface-2, #f3f4f6)", borderRadius: 4 }} />
+                            <div style={{ height: 10, width: "50%", background: "var(--surface-2, #f3f4f6)", borderRadius: 4 }} />
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                              <div style={{ height: 16, width: 50, background: "var(--surface-2, #f3f4f6)", borderRadius: 4 }} />
+                              <div style={{ height: 32, width: 80, background: "var(--surface-2, #f3f4f6)", borderRadius: 8 }} />
+                            </div>
+                          </div>
+                        </article>
+                      ))
+                    : visibleItems.map((item) => (
                     <article key={item.id} className="card public-menu-card">
                       <div className="public-menu-card-media">
                         {item.image_path ? (
@@ -1557,6 +1861,8 @@ export default function HomePage() {
                         entry.order.status === "pendente",
                     )}
                     onReopenPix={reopenPixConfirmation}
+                    onCancelOrder={cancelOrder}
+                    onReorder={reorderItems}
                   />
                 ))}
               </div>

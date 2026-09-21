@@ -1,194 +1,363 @@
+<div align="center">
+
 # PDV Dona Rose
 
-Sistema de pedidos, gestão de cardápio e controle operacional voltado para atendimento de condomínios da Dona Rose.
+**Sistema completo de pedidos, gestão de cardápio e controle operacional para comércio de salgados.**
 
-## Visão geral
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Mercado Pago](https://img.shields.io/badge/Mercado%20Pago-PIX-009EE3?style=flat-square&logo=mercadopago&logoColor=white)](https://www.mercadopago.com.br/)
 
-O projeto está dividido em duas frentes:
+</div>
 
-- `Área do cliente`: cardápio público, montagem do pedido e acompanhamento do status.
-- `Área administrativa`: gestão do cardápio, vendas, perdas, compras, gastos, configurações e relatórios.
+---
 
-O fluxo foi pensado para operação em condomínios, onde o cliente faz o pedido, acompanha o andamento e o entregador recebe um código curto para conferência no balcão ou na entrega.
+## Visão Geral
+
+O PDV Dona Rose é um sistema web full-stack desenvolvido para gerenciar o ciclo completo de um estabelecimento de salgados — desde a visualização do cardápio pelo cliente até o controle operacional pelo administrador.
+
+O projeto é dividido em duas frentes:
+
+- **Área do cliente** — cardápio público, montagem do pedido, pagamento via PIX com QR Code e acompanhamento em tempo real.
+- **Área administrativa** — dashboard, gestão de cardápio, vendas, perdas, compras, gastos, configurações e relatórios.
+
+<div align="center">
+
+![Cardápio do Cliente](screenshots/cardapio_cliente.png)
+
+*Cardápio público com produtos, preços e categorias*
+
+</div>
+
+---
 
 ## Funcionalidades
 
-### Cliente
+### Área do Cliente
 
-- Visualiza o cardápio público.
-- Adiciona itens ao carrinho.
-- Envia o pedido com nome, telefone, entrega ou retirada e forma de pagamento.
-- Recebe um código curto de 4 dígitos para ditar ao entregador.
-- Acompanha o status do pedido em tempo real.
-- No PIX, o cliente confirma que pagou, mas o andamento só fica visível depois da confirmação manual do admin.
+| Funcionalidade | Descrição |
+|----------------|-----------|
+| Cardápio público | Visualiza produtos com imagem, preço e categoria |
+| Carrinho | Adiciona e remove itens com controles +/- |
+| Pedido | Envia com nome, telefone, entrega/retirada e pagamento |
+| PIX com QR Code | QR Code gerado automaticamente via Mercado Pago |
+| Código curto | Recebe código de 4 dígitos (ex: 0007) para o entregador |
+| Acompanhamento | Stepper de status em tempo real com estimativa de tempo |
+| Cancelamento | Cancela pedidos pendentes diretamente pelo cliente |
+| Pedir novamente | Repete o pedido anterior com um clique |
 
-### Pedido
+<div align="center">
 
-- Registra itens, total, forma de pagamento, dados de entrega e observações.
-- Mantém histórico do pedido mesmo após concluído.
-- Gera código diário de 4 dígitos, de `0001` até `9999`.
-- Reinicia a sequência todos os dias.
-- Se o limite diário for atingido, a API bloqueia novos pedidos naquele dia.
-- O envio de pedidos tem rate limit para reduzir spam e abuso no formulário público.
+| Cardápio | Carrinho | Pagamento PIX | Acompanhamento |
+|:---------:|:--------:|:-------------:|:--------------:|
+| ![Cardápio](screenshots/cardapio_cliente.png) | ![Carrinho](screenshots/carrinho_cliente.png) | ![PIX](screenshots/cliente_pagtopix.png) | ![Acompanhar](screenshots/acompanharpedido_cliente.png) |
 
-### Gestão
+</div>
 
-- Cria, edita, ativa e desativa produtos.
-- Cria, edita, remove e reordena categorias.
-- Define nome, preço, custo, quantidade em estoque, marca, imagem e categoria do produto.
-- Permite pausar manualmente um produto no cardápio.
+### Área Administrativa
 
-### Compras
+| Funcionalidade | Descrição |
+|----------------|-----------|
+| Dashboard | Pedidos do dia com status, badges e resumo operacional |
+| Gestão de cardápio | CRUD completo de categorias e produtos |
+| Histórico de vendas | Pedidos agrupados por data com indicadores |
+| Perdas e compras | Registro de itens descartados e reposição de insumos |
+| Configurações | Gateway Mercado Pago, PIX estático (fallback), dados do recebedor |
+| Autenticação | Login seguro com NextAuth |
 
-- Registra itens comprados para o comércio.
-- Aceita itens do cardápio e também itens específicos de compra.
-- Permite cadastrar categorias próprias de compras.
-- Reaproveita categorias existentes do cardápio na visão de compras.
-- Soma automaticamente o total da compra com base nos itens e quantidades.
+<div align="center">
 
-### Gastos
+| Dashboard | Gestão | Vendas | Configurações |
+|:---------:|:------:|:------:|:-------------:|
+| ![Dashboard](screenshots/admin_dashboardpedidos.png) | ![Gestão](screenshots/admin_gestaocardapio.png) | ![Vendas](screenshots/admin_historicodevendas.png) | ![Config](screenshots/admin_configgatewaymlb.png) |
 
-- Centraliza os controles de `Perdas` e `Compras`.
-- Em `Perdas`, registra itens descartados ou perdidos.
-- Em `Compras`, registra reposição de insumos e novos produtos.
+</div>
 
-### Vendas e relatórios
+---
 
-- Exibe pedidos e indicadores operacionais.
-- Mostra dados reais do período, sem números fixos hardcoded.
+## Fluxo de Pagamento
 
-## Regras de negócio principais
+O sistema implementa uma arquitetura de pagamento com **fallback automático**:
 
-- O estoque não é baixado automaticamente a cada venda.
-- A entrada real de estoque vem do módulo de `Compras`.
-- A disponibilidade de um produto é controlada manualmente na `Gestão`.
-- Produtos e categorias criados em `Compras` não vão para o `Cardápio`.
-- Todo item ou categoria criada no `Cardápio` também pode aparecer em `Compras`.
-- O código do pedido é curto, humano e diário.
-- O PIX é confirmado manualmente pelo admin, sem webhook ou conciliação automática.
-- As configurações públicas expostas ao cliente ficam restritas ao necessário para o PIX; o acesso completo fica no painel administrativo.
+<div align="center">
 
-## Segurança e operação
+![Fluxo de Pagamento PIX](screenshots/fluxo_pix_mercado_pago_fallback.png)
 
-- O projeto não expõe `.env` no Git; apenas `.env.example` vai para o repositório.
-- O endpoint público de pedidos tem rate limit para reduzir spam.
-- O PIX mostrado ao cliente é somente informativo e depende de confirmação manual do admin.
-- O acesso administrativo é protegido por sessão e verificação de papel.
-- O primeiro deploy deve começar com banco vazio, para que categorias e produtos sejam cadastrados do zero.
+*Fluxo de pagamento: Mercado Pago (automático) com fallback para PIX Estático (manual)*
 
-## Stack
+</div>
 
-- Next.js
-- TypeScript
-- PostgreSQL
-- NextAuth
-- `pg`
-- `next-cloudinary`
-- Docker
-- Docker Compose
+- **PIX via Mercado Pago** — QR Code gerado automaticamente, confirmação via webhook
+- **PIX Estático (fallback)** — QR Code fixo, confirmação manual pelo admin
+- **Criptografia** — Access Token e Webhook Secret criptografados com AES-256-GCM
 
-## Como rodar com Docker
+<div align="center">
 
-1. Copie o arquivo de exemplo:
+![Detalhe Pedido](screenshots/admin_dashboarddetalhespedido.png)
+
+*Dashboard com detalhes do pedido e status de pagamento*
+
+</div>
+
+---
+
+## Stack Tecnológica
+
+| Camada | Tecnologia |
+|--------|------------|
+| Frontend | React 19, Next.js 15, TypeScript |
+| Backend | Next.js API Routes |
+| Banco de Dados | PostgreSQL 16 |
+| Autenticação | NextAuth v4 |
+| Pagamentos | Mercado Pago (Orders API - PIX) |
+| Imagens | Cloudinary |
+| Criptografia | AES-256-GCM (Node.js crypto) |
+| Infraestrutura | Docker, Docker Compose |
+
+---
+
+## Pré-requisitos
+
+- **Node.js** 18+
+- **Docker** e **Docker Compose** (recomendado)
+- Conta gratuita no **[Mercado Pago](https://www.mercadopago.com.br/)**
+- Conta gratuita no **[Cloudinary](https://cloudinary.com/)**
+
+---
+
+## Como Rodar
+
+### Com Docker (Recomendado)
 
 ```bash
+# 1. Clonar o repositório
+git clone https://github.com/seu-usuario/pdv-dona-rose.git
+cd pdv-dona-rose
+
+# 2. Configurar variáveis de ambiente
 cp .env.example .env
-```
+# Edite o .env com suas credenciais (veja Guia de Configuração)
 
-2. Preencha as variáveis do `.env` com seus valores reais.
-
-3. Suba o banco e a aplicação:
-
-```bash
+# 3. Subir banco e aplicação
 docker compose up --build
+
+# 4. Acessar
+# Cardápio: http://localhost:3000
+# Admin:    http://localhost:3000/admin
 ```
 
-4. Acesse:
-
-- Aplicação: `http://localhost:3000`
-- Painel administrativo: `http://localhost:3000/admin`
-
-### Primeiro acesso
-
-Na primeira instalação, o banco sobe vazio:
-
-- não há categorias pré-criadas
-- não há produtos pré-cadastrados
-- não há histórico de vendas, compras ou perdas
-
-Depois do login no painel, comece por:
-
-1. criar as categorias
-2. cadastrar os itens do cardápio
-3. configurar o PIX em `Configurações`
-4. ajustar compras, perdas e estoque conforme a operação
-
-## Como rodar sem Docker
-
-1. Instale as dependências:
+### Sem Docker
 
 ```bash
+# 1. Instalar dependências
 npm install
-```
 
-2. Garanta que o PostgreSQL esteja disponível e que `DATABASE_URL` aponte para ele.
+# 2. Configurar PostgreSQL e .env
+cp .env.example .env
+# Ajuste DATABASE_URL para seu PostgreSQL
 
-3. Copie o `.env.example` para `.env` e ajuste os valores.
-
-4. Inicie o projeto:
-
-```bash
+# 3. Iniciar
 npm run dev
 ```
 
-5. Acesse a aplicação na porta definida pelo Next.js local.
+---
 
-## Variáveis de ambiente
+## Guia de Configuração
 
-Use `.env` apenas na sua máquina local. Ele está ignorado pelo Git.
+### 1. Criar aplicação no Mercado Pago
 
-O arquivo `.env.example` contém apenas placeholders, sem credenciais reais.
+1. Acesse o [Painel de Desenvolvedores](https://www.mercadopago.com.br/developers/panel/app)
+2. Clique em **Criar aplicação**
+3. Preencha:
+   - **Nome da aplicação**: Ex: "PDV Dona Rose"
+   - **Descrição**: Ex: "Sistema de pedidos para salgados"
+   - **Setor**: Selecione o mais adequado
+4. Clique em **Criar aplicação**
+5. Na página da aplicação, vá em **Credenciais** no menu lateral
+6. Copie a **Public Key** e o **Access Token** (aba "Testes")
 
-Principais variáveis:
+### 2. Ativar PIX na conta
 
-- `DATABASE_URL`
-- `NEXTAUTH_URL`
-- `NEXTAUTH_SECRET`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
-- `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`
-- `NEXT_PUBLIC_CLOUDINARY_API_KEY`
-- `CLOUDINARY_URL`
+1. No painel do Mercado Pago, vá em **Seu negócio > Meios de pagamento**
+2. Procure **PIX** e ative-o
+3. Cadastre uma **chave PIX** (e-mail, CPF, telefone ou aleatória)
+4. Pronto! PIX estará disponível para receber pagamentos
 
-## Scripts disponíveis
+### 3. Configurar Webhook
 
-- `npm run dev`: ambiente de desenvolvimento.
-- `npm run build`: build de produção.
-- `npm run start`: executa o build de produção.
-- `npm run typecheck`: validação de tipos com TypeScript.
+O webhook permite que o Mercado Pago notifique sua aplicação quando um pagamento for confirmado.
 
-## Estrutura principal
+1. No painel do Mercado Pago, vá em **Sua aplicação > Webhooks**
+2. Clique em **Adicionar webhook**
+3. Cole a URL do webhook:
+   ```
+   https://seudominio.com/api/webhooks/mercadopago
+   ```
+4. Selecione o tópico: **Pagamentos**
+5. Clique em **Salvar**
 
-- `pages/index.tsx`: cardápio público e envio de pedidos.
-- `pages/admin/*`: painel administrativo.
-- `pages/api/orders.ts`: criação de pedidos.
-- `pages/api/admin/*`: rotas protegidas do painel.
-- `pages/api/auth/[...nextauth].ts`: autenticação.
-- `pages/api/cloudinary/signature.ts`: assinatura para upload no Cloudinary.
-- `pages/api/settings.ts`: settings públicas do PIX e edição administrativa.
-- `lib/db.ts`: conexão com o PostgreSQL.
-- `lib/rate-limit.ts`: proteção simples contra spam nos pedidos.
-- `lib/schema.ts`: preparação do schema do banco.
-- `sql/schema.sql`: schema base para o banco.
+> **Desenvolvimento local:** Use o [ngrok](https://ngrok.com/) para expor sua aplicação:
+> ```bash
+> ngrok http 3000
+> ```
+> Copie a URL pública (ex: `https://abc123.ngrok-free.app`) e use como `APP_URL` no `.env`.
 
-## Acesso inicial
+### 4. Configurar Cloudinary
 
-- Cardápio público: `http://localhost:3000`
-- Painel interno: `http://localhost:3000/admin`
-- Login do painel: `http://localhost:3000/admin/login`
+O Cloudinary é usado para armazenar imagens dos produtos.
 
-## Observações
+1. Acesse o [Cloudinary](https://cloudinary.com/) e crie uma conta gratuita
+2. No painel, copie:
+   - **Cloud Name** (aba Dashboard)
+   - **API Key** (aba Settings > API Keys)
+3. Monte a **CLOUDINARY_URL**:
+   ```
+   cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+   ```
+   O **API Secret** também está na aba Settings > API Keys.
 
-- Se você alterar a porta do projeto local, ajuste `NEXTAUTH_URL`.
-- A gestão de vendas, perdas, compras e estoque foi pensada para o fluxo real de uma produção de salgados, com controle operacional manual onde faz mais sentido.
-- O fluxo do PIX é propositalmente manual: o cliente paga, o admin confere e confirma no painel.
+### 5. Configurar no painel admin
+
+1. Acesse `http://localhost:3000/admin/login`
+2. Faça login com as credenciais do `.env` (`ADMIN_EMAIL` / `ADMIN_PASSWORD`)
+3. Vá em **Configurações**
+4. Na seção **Gateway de Pagamento**:
+   - Cole o **Access Token** do Mercado Pago
+   - Cole a **Public Key** do Mercado Pago
+   - Clique em **Salvar credenciais**
+   - Clique em **Testar conexão** para verificar
+5. Na seção **PIX estático (Fallback)**:
+   - Envie uma imagem de QR Code PIX (opcional, para fallback)
+   - Preencha a **Chave PIX** (e-mail, telefone ou chave aleatória)
+   - Preencha o **Nome do recebedor**
+   - Clique em **Salvar**
+
+### 6. Configuração inicial do cardápio
+
+1. Vá em **Gestão** no painel admin
+2. Crie **categorias** (ex: Assados, Fritos, Bebidas)
+3. Crie **produtos** para cada categoria:
+   - Nome, preço, custo
+   - Imagem (upload via Cloudinary)
+   - Categoria
+4. Os produtos aparecerão automaticamente no cardápio público
+
+---
+
+## Variáveis de Ambiente
+
+### Obrigatórias
+
+| Variável | Descrição |
+|----------|-----------|
+| `DATABASE_URL` | String de conexão com PostgreSQL |
+| `NEXTAUTH_URL` | URL da aplicação (ex: http://localhost:3000) |
+| `NEXTAUTH_SECRET` | Secret para NextAuth (min 32 chars) |
+| `ADMIN_EMAIL` | Email do administrador |
+| `ADMIN_PASSWORD` | Senha do administrador |
+| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | Nome da nuvem Cloudinary |
+| `NEXT_PUBLIC_CLOUDINARY_API_KEY` | API Key do Cloudinary |
+| `CLOUDINARY_URL` | URL completa do Cloudinary |
+
+### Opcionais (PIX Gateway)
+
+| Variável | Descrição |
+|----------|-----------|
+| `MERCADO_PAGO_ACCESS_TOKEN` | Access Token do Mercado Pago |
+| `MERCADO_PAGO_PUBLIC_KEY` | Public Key do Mercado Pago |
+| `MERCADO_PAGO_WEBHOOK_SECRET` | Segredo para validar webhooks |
+| `SETTINGS_ENCRYPTION_KEY` | Chave de criptografia (32 bytes hex) |
+| `APP_URL` | URL pública (para webhook) |
+
+> **Nota:** As variáveis do Mercado Pago são opcionais. Se não configuradas, o sistema usa PIX estático como fallback. As credenciais também podem ser configuradas pelo painel admin em **Configurações**.
+
+---
+
+## Estrutura do Projeto
+
+```
+pdv-dona-rose/
+├── components/
+│   ├── AdminLayout.tsx          # Layout do painel administrativo
+│   └── Feedback.tsx             # Sistema de notificações toast
+├── lib/
+│   ├── admin-access.ts          # Verificação de acesso admin
+│   ├── cloudinary.ts            # Configuração do Cloudinary
+│   ├── crypto.ts                # Criptografia AES-256-GCM
+│   ├── db.ts                    # Conexão com PostgreSQL
+│   ├── mercadopago.ts           # Integração Mercado Pago (Orders API)
+│   ├── rate-limit.ts            # Rate limiting para API
+│   ├── schema.ts                # Migrations do banco
+│   └── session.ts               # Sessão do cliente (localStorage)
+├── pages/
+│   ├── api/
+│   │   ├── admin/               # APIs protegidas do admin
+│   │   ├── auth/                # Autenticação NextAuth
+│   │   ├── webhooks/            # Webhook do Mercado Pago
+│   │   ├── menu.ts              # API pública do cardápio
+│   │   ├── orders.ts            # Criação de pedidos
+│   │   └── settings.ts          # Configurações do sistema
+│   ├── admin/
+│   │   ├── cardapio.tsx         # Gestão de cardápio
+│   │   ├── configuracoes.tsx    # Configurações gateway PIX
+│   │   ├── gastos.tsx           # Perdas e compras
+│   │   ├── gestao.tsx           # Gestão de produtos
+│   │   ├── index.tsx            # Dashboard principal
+│   │   ├── login/               # Login do admin
+│   │   ├── perdas.tsx           # Registro de perdas
+│   │   └── vendas.tsx           # Histórico de vendas
+│   ├── index.tsx                # Cardápio público (cliente)
+│   └── _app.tsx                 # Provider global
+├── sql/
+│   └── schema.sql               # Schema base do banco
+├── styles/
+│   └── globals.css              # Estilos globais
+├── types/
+│   └── domain.ts                # Tipos do domínio
+├── docker-compose.yml           # Configuração Docker
+├── Dockerfile                   # Build de produção
+└── package.json
+```
+
+---
+
+## Regras de Negócio
+
+| Regra | Descrição |
+|-------|-----------|
+| Estoque manual | O estoque não é baixado automaticamente a cada venda |
+| Compras = Entrada | A entrada real de estoque vem do módulo de Compras |
+| Disponibilidade | Controlada manualmente na Gestão |
+| Código diário | Sequencial de 0001 a 9999, reinicia todo dia |
+| PIX fallback | Se Mercado Pago falhar, usa PIX estático automaticamente |
+| Criptografia | Access Token e Webhook Secret criptografados no banco |
+| Cache | Credenciais cacheadas por 60 segundos, invalidadas ao salvar |
+
+---
+
+## Scripts Disponíveis
+
+| Script | Descrição |
+|--------|-----------|
+| `npm run dev` | Ambiente de desenvolvimento |
+| `npm run build` | Build de produção |
+| `npm run start` | Executa build de produção |
+| `npm run typecheck` | Validação de tipos TypeScript |
+
+---
+
+## Acesso Inicial
+
+| Rota | Descrição |
+|------|-----------|
+| `/` | Cardápio público (cliente) |
+| `/admin` | Painel administrativo |
+| `/admin/login` | Login do administrativo |
+
+---
+
+## Licença
+
+Este é um projeto privado. Todos os direitos reservados.

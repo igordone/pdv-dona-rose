@@ -34,13 +34,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         delivery_address: string | null;
         payment_method: string;
         payment_confirmed_at: string | null;
+        payment_status: string | null;
         status: string;
         total_cents: number;
         notes: string | null;
         created_at: string;
         viewed_at: string | null;
       }>(
-        `SELECT id, order_code, client_name, client_phone, delivery_method, delivery_address, payment_method, payment_confirmed_at,
+        `SELECT id, order_code, client_name, client_phone, delivery_method, delivery_address, payment_method, payment_confirmed_at, payment_status,
                 CASE
                   WHEN status = 'pending' THEN 'pendente'
                   WHEN status = 'completed' THEN 'concluido'

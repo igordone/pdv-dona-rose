@@ -355,6 +355,36 @@ export async function ensureCatalogSchema() {
   `);
 
   await query(`
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS payment_id VARCHAR(100);
+  `);
+
+  await query(`
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30) DEFAULT 'pendente';
+  `);
+
+  await query(`
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS payment_qr_code TEXT;
+  `);
+
+  await query(`
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS payment_link TEXT;
+  `);
+
+  await query(`
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS payment_copia_e_cola TEXT;
+  `);
+
+  await query(`
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS payment_external_reference VARCHAR(100);
+  `);
+
+  await query(`
     DO $$
     BEGIN
       IF EXISTS (
