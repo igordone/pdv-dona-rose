@@ -355,9 +355,3 @@ pdv-dona-rose/
 | `/` | Cardápio público (cliente) |
 | `/admin` | Painel administrativo |
 | `/admin/login` | Login do administrativo |
-
----
-
-## Licença
-
-Este é um projeto privado. Todos os direitos reservados.
